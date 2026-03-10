@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Role values: ADMIN | EMPLOYEE | SUBCONTRACTOR
+// JobStatus values: ACTIVE | COMPLETED | ARCHIVED
+
+model User {
+  id                String          @id @default(cuid())
+  name              String
+  email             String          @unique
+  passwordHash      String
+  role              String          @default("EMPLOYEE")
+  phone             String?
+  createdAt         DateTime        @default(now())
+  schedules         ScheduleEntry[] @relation("Worker")
+  supervisorEntries ScheduleEntry[] @relation("Supervisor")
+  messages          Message[]
+  documents         Document[]
+}
+
+model Job {
+  id          String          @id @default(cuid())
+  name        String
+  address     String
+  description String?
+  status      String          @default("ACTIVE")
+  color       String          @default("#3B82F6")
+  createdAt   DateTime        @default(now())
+  phases      Phase[]
+  schedules   ScheduleEntry[]
+  messages    Message[]
+  documents   Document[]
+  production  ProductionLog[]
+}
+
+model Phase {
+  id          String          @id @default(cuid())
+  name        String
+  description String?
+  orderIndex  Int             @default(0)
+  jobId       String
+  job         Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  startDate   DateTime?
+  endDate     DateTime?
+  dependsOnId String?
+  dependsOn   Phase?          @relation("PhaseDeps", fields: [dependsOnId], references: [id])
+  dependents  Phase[]         @relation("PhaseDeps")
+  schedules   ScheduleEntry[]
+  messages    Message[]
+  documents   Document[]
+  production  ProductionLog[]
+}
+
+model ScheduleEntry {
+  id           String   @id @default(cuid())
+  jobId        String
+  job          Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  phaseId      String?
+  phase        Phase?   @relation(fields: [phaseId], references: [id])
+  userId       String
+  user         User     @relation("Worker", fields: [userId], references: [id])
+  supervisorId String?
+  supervisor   User?    @relation("Supervisor", fields: [supervisorId], references: [id])
+  date         DateTime
+  startTime    String
+  endTime      String
+  notes        String?
+  createdAt    DateTime @default(now())
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  content   String
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  jobId     String
+  job       Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  phaseId   String?
+  phase     Phase?   @relation(fields: [phaseId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+model Document {
+  id           String   @id @default(cuid())
+  name         String
+  fileUrl      String
+  fileType     String
+  fileCategory String   @default("document")
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  jobId        String
+  job          Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  phaseId      String?
+  phase        Phase?   @relation(fields: [phaseId], references: [id])
+  createdAt    DateTime @default(now())
+}
+
+model ProductionLog {
+  id         String   @id @default(cuid())
+  date       DateTime
+  metricName String
+  value      Float
+  unit       String
+  notes      String?
+  jobId      String
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  phaseId    String?
+  phase      Phase?   @relation(fields: [phaseId], references: [id])
+  createdAt  DateTime @default(now())
+}
