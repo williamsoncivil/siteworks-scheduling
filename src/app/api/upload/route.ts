@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { writeFile, mkdir } from "fs/promises";
-import path from "path";
+import { put } from "@vercel/blob";
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -21,19 +20,15 @@ export async function POST(req: NextRequest) {
   const bytes = await file.arrayBuffer();
   const buffer = Buffer.from(bytes);
 
-  // Ensure uploads directory exists
-  const uploadsDir = path.join(process.cwd(), "public", "uploads");
-  await mkdir(uploadsDir, { recursive: true });
-
   // Create unique filename
   const timestamp = Date.now();
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
   const filename = `${timestamp}_${safeName}`;
-  const filepath = path.join(uploadsDir, filename);
 
-  await writeFile(filepath, buffer);
+  // Upload to Vercel Blob
+  const blob = await put(filename, buffer, { access: "public", contentType: file.type });
 
-  const fileUrl = `/uploads/${filename}`;
+  const fileUrl = blob.url;
   const fileType = file.type || "application/octet-stream";
 
   // Auto-detect category based on MIME type
