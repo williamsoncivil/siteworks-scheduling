@@ -7,7 +7,7 @@ const navLinks = [
   { href: "/", label: "Dashboard", icon: "🏠" },
   { href: "/jobs", label: "Jobs", icon: "🏗️" },
   { href: "/schedule", label: "Schedule", icon: "📅" },
-  { href: "/schedule/gantt", label: "Timeline", icon: "📊" },
+  { href: "/schedule/timeline", label: "Timeline", icon: "👤" },
   { href: "/people", label: "People", icon: "👥" },
 ];
 
