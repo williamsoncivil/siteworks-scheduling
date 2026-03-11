@@ -80,6 +80,8 @@ export default function MasterGanttPage() {
   } | null>(null);
   const isDraggingRef = useRef(false);
   const dayWidthRef = useRef(DAY_WIDTH);
+  // Stores the last dayIndex shown in the ghost — mouseUp uses this directly so save = what you see
+  const pendingDayIndexRef = useRef<number>(0);
 
   const [dragPhaseId, setDragPhaseId] = useState<string | null>(null);
   const [dragGhost, setDragGhost] = useState<{
@@ -148,11 +150,14 @@ export default function MasterGanttPage() {
       const vs = viewStartRef.current;
       const td = totalDaysRef.current;
 
-      // Delta-based: mouse delta + scroll delta = total bar movement in pixels
+      // Delta-based: mouse delta + scroll delta → new bar left → day index
       const currentScrollLeft = scrollRef.current.scrollLeft;
       const pixelDelta = (e.clientX - drag.startMouseX) + (currentScrollLeft - drag.startScrollLeft);
       const newBarLeft = drag.barStartLeft + pixelDelta;
       const dayIndex = Math.max(0, Math.min(Math.round(newBarLeft / dw), td - 1));
+
+      // Store so mouseUp uses EXACTLY the same value the ghost showed
+      pendingDayIndexRef.current = dayIndex;
 
       const newStart = addDays(vs, dayIndex);
       const newEnd = addDays(newStart, drag.durationDays);
@@ -166,11 +171,12 @@ export default function MasterGanttPage() {
       setDragCursorTooltip({ x: e.clientX, y: e.clientY, newStart, newEnd });
     };
 
-    const handleMouseUp = async (e: MouseEvent) => {
+    const handleMouseUp = async (_e: MouseEvent) => {
       const drag = dragDataRef.current;
       if (!drag) return;
 
-      const pixelDeltaX = e.clientX - drag.startMouseX;
+      // Use the last dayIndex the ghost displayed — guaranteed to match what user saw
+      const dayIndex = pendingDayIndexRef.current;
 
       // Clear drag state synchronously
       dragDataRef.current = null;
@@ -179,19 +185,7 @@ export default function MasterGanttPage() {
       setDragGhost(null);
       setDragCursorTooltip(null);
 
-      // Ignore tiny moves (click vs drag threshold)
-      if (Math.abs(pixelDeltaX) < 5) return;
-      if (!scrollRef.current) return;
-
-      const dw = dayWidthRef.current;
       const vs = viewStartRef.current;
-      const td = totalDaysRef.current;
-
-      // Same delta calculation as mousemove for consistency
-      const currentScrollLeft = scrollRef.current.scrollLeft;
-      const pixelDelta = pixelDeltaX + (currentScrollLeft - drag.startScrollLeft);
-      const newBarLeft = drag.barStartLeft + pixelDelta;
-      const dayIndex = Math.max(0, Math.min(Math.round(newBarLeft / dw), td - 1));
 
       const newStart = addDays(vs, dayIndex);
       const newEnd = addDays(newStart, drag.durationDays);
@@ -360,6 +354,8 @@ export default function MasterGanttPage() {
     };
     isDraggingRef.current = true;
     setDragPhaseId(phase.id);
+    // Seed with current bar day so a click-release with no mousemove is a no-op
+    pendingDayIndexRef.current = barStartDay;
   };
 
   const handleBarClick = (e: React.MouseEvent, phase: Phase, jobName: string) => {
