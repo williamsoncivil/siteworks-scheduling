@@ -68,7 +68,7 @@ export default function FilesPage() {
       map.get(key)!.push(doc);
     });
     // Sort: phases first (alphabetically), then "No Phase" at the end
-    const entries = [...map.entries()].sort(([a], [b]) => {
+    const entries = Array.from(map.entries()).sort(([a], [b]) => {
       if (a === "No Phase") return 1;
       if (b === "No Phase") return -1;
       return a.localeCompare(b);
