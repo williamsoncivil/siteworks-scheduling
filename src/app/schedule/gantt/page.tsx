@@ -62,6 +62,11 @@ export default function MasterGanttPage() {
   const [popover, setPopover] = useState<{ phase: Phase; jobName: string; x: number; y: number } | null>(null);
   const [saving, setSaving] = useState(false);
   const [optimisticDates, setOptimisticDates] = useState<Record<string, { startDate: string; endDate: string }>>({});
+  const [editModal, setEditModal] = useState<{
+    phase: Phase; jobName: string;
+    startDate: string; endDate: string;
+    saving: boolean; error: string;
+  } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
@@ -361,8 +366,37 @@ export default function MasterGanttPage() {
   const handleBarClick = (e: React.MouseEvent, phase: Phase, jobName: string) => {
     if (isDraggingRef.current) return;
     e.stopPropagation();
-    const rect = (e.target as HTMLElement).getBoundingClientRect();
-    setPopover({ phase, jobName, x: rect.left, y: rect.bottom + 8 });
+    setPopover(null);
+    const eff = optimisticDates[phase.id];
+    setEditModal({
+      phase,
+      jobName,
+      startDate: eff?.startDate ?? phase.startDate ?? "",
+      endDate: eff?.endDate ?? phase.endDate ?? "",
+      saving: false,
+      error: "",
+    });
+  };
+
+  const saveEditModal = async () => {
+    if (!editModal) return;
+    setEditModal((m) => m ? { ...m, saving: true, error: "" } : null);
+    try {
+      const res = await fetch(`/api/phases/${editModal.phase.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startDate: editModal.startDate, endDate: editModal.endDate }),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      setOptimisticDates((prev) => ({
+        ...prev,
+        [editModal.phase.id]: { startDate: editModal.startDate, endDate: editModal.endDate },
+      }));
+      setEditModal(null);
+      fetchData();
+    } catch {
+      setEditModal((m) => m ? { ...m, saving: false, error: "Failed to save — please try again" } : null);
+    }
   };
 
   if (loading) {
@@ -769,6 +803,54 @@ export default function MasterGanttPage() {
           }}
         >
           → {format(dragCursorTooltip.newStart, "MMM d")} – {format(dragCursorTooltip.newEnd, "MMM d, yyyy")}
+        </div>
+      )}
+
+      {/* Edit dates modal */}
+      {editModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setEditModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 mx-4" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4">
+              <h3 className="font-semibold text-gray-900 text-base">{editModal.phase.name}</h3>
+              <p className="text-xs text-gray-400 mt-0.5">{editModal.jobName}</p>
+            </div>
+            <div className="space-y-3 mb-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Start Date</label>
+                <input
+                  type="date"
+                  value={editModal.startDate}
+                  onChange={(e) => setEditModal((m) => m ? { ...m, startDate: e.target.value } : null)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">End Date</label>
+                <input
+                  type="date"
+                  value={editModal.endDate}
+                  onChange={(e) => setEditModal((m) => m ? { ...m, endDate: e.target.value } : null)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            {editModal.error && <p className="text-xs text-red-500 mb-3">{editModal.error}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={saveEditModal}
+                disabled={editModal.saving || !editModal.startDate || !editModal.endDate}
+                className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {editModal.saving ? "Saving…" : "Save"}
+              </button>
+              <button
+                onClick={() => setEditModal(null)}
+                className="px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
