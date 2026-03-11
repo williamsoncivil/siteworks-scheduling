@@ -5,6 +5,9 @@ import { put } from "@vercel/blob";
 // One-time import token for Buildertrend migration
 const IMPORT_TOKEN = "bt-import-2026-williamson";
 
+// Vercel max body is ~4.5MB; above this threshold use chunked upload
+const CHUNK_THRESHOLD_BYTES = 3 * 1024 * 1024; // 3MB base64 string
+
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": "https://buildertrend.net",
@@ -19,10 +22,10 @@ export async function OPTIONS() {
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { token, name, b64, contentType, jobName, phaseTitle } = body;
+  const { token, name, b64, contentType, jobName, phaseTitle, blobUrl } = body;
 
   if (token !== IMPORT_TOKEN) {
-    return NextResponse.json({ error: "Invalid token" }, { status: 401 }, );
+    return NextResponse.json({ error: "Invalid token" }, { status: 401 });
   }
 
   // Find job by name
@@ -36,20 +39,29 @@ export async function POST(req: NextRequest) {
     ? await prisma.phase.findFirst({ where: { name: phaseTitle, jobId: job.id } })
     : null;
 
-  // Upload to Vercel Blob
-  const buf = Buffer.from(b64, "base64");
-  const safeName = name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const blobPath = `williamson/${jobName.replace(/[^a-zA-Z0-9]/g, "-")}/${Date.now()}_${safeName}`;
-  const blob = await put(blobPath, buf, { access: "public", contentType: contentType || "application/pdf" });
-
-  // Find an admin user to attribute the upload to
   const adminUser = await prisma.user.findFirst({ where: { role: "ADMIN" } });
+  const safeName = (name || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
+  const blobPath = `williamson/${jobName.replace(/[^a-zA-Z0-9]/g, "-")}/${Date.now()}_${safeName}`;
 
-  // Save document record
+  let finalUrl: string;
+
+  if (blobUrl) {
+    // Large file: already uploaded directly to Vercel Blob, just register in DB
+    finalUrl = blobUrl;
+  } else {
+    // Small/medium file: base64 encoded in body
+    const buf = Buffer.from(b64, "base64");
+    const blob = await put(blobPath, buf, {
+      access: "public",
+      contentType: contentType || "application/pdf",
+    });
+    finalUrl = blob.url;
+  }
+
   const doc = await prisma.document.create({
     data: {
       name,
-      fileUrl: blob.url,
+      fileUrl: finalUrl,
       fileType: contentType || "application/pdf",
       fileCategory: (contentType || "").startsWith("image/") ? "photo" : "document",
       uploadedById: adminUser!.id,
@@ -59,7 +71,7 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json(
-    { ok: true, url: blob.url, docId: doc.id, phaseTitle },
+    { ok: true, url: finalUrl, docId: doc.id, phaseTitle },
     { status: 201, headers: corsHeaders() }
   );
 }
