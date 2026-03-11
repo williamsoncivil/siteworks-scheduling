@@ -84,6 +84,7 @@ export default function MasterGanttPage() {
     barColor: string;
   } | null>(null);
   const isDraggingRef = useRef(false);
+  const wasDragRef = useRef(false); // true if mouse moved enough to count as a drag (suppresses click)
   const dayWidthRef = useRef(DAY_WIDTH);
   // Stores the last dayIndex shown in the ghost — mouseUp uses this directly so save = what you see
   const pendingDayIndexRef = useRef<number>(0);
@@ -163,6 +164,7 @@ export default function MasterGanttPage() {
 
       // Store so mouseUp uses EXACTLY the same value the ghost showed
       pendingDayIndexRef.current = dayIndex;
+      wasDragRef.current = true; // mouse moved — treat as drag, suppress click
 
       const newStart = addDays(vs, dayIndex);
       const newEnd = addDays(newStart, drag.durationDays);
@@ -334,7 +336,6 @@ export default function MasterGanttPage() {
     barColor: string,
   ) => {
     if (!phase.startDate || !phase.endDate || !scrollRef.current) return;
-    e.preventDefault();
     e.stopPropagation();
     setPopover(null);
 
@@ -358,13 +359,14 @@ export default function MasterGanttPage() {
       barColor,
     };
     isDraggingRef.current = true;
+    wasDragRef.current = false;
     setDragPhaseId(phase.id);
     // Seed with current bar day so a click-release with no mousemove is a no-op
     pendingDayIndexRef.current = barStartDay;
   };
 
   const handleBarClick = (e: React.MouseEvent, phase: Phase, jobName: string) => {
-    if (isDraggingRef.current) return;
+    if (wasDragRef.current) { wasDragRef.current = false; return; }
     e.stopPropagation();
     setPopover(null);
     const eff = optimisticDates[phase.id];
