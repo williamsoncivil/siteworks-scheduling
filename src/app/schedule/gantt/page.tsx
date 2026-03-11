@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import Layout from "@/components/Layout";
 import Link from "next/link";
 import {
@@ -60,8 +60,32 @@ export default function MasterGanttPage() {
   const [jobs, setJobs] = useState<JobWithPhases[]>([]);
   const [loading, setLoading] = useState(true);
   const [popover, setPopover] = useState<{ phase: Phase; jobName: string; x: number; y: number } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [optimisticDates, setOptimisticDates] = useState<Record<string, { startDate: string; endDate: string }>>({});
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
+
+  // ── Mouse-drag state ──────────────────────────────────────────────────────
+  const dragDataRef = useRef<{
+    phaseId: string;
+    startDate: string;
+    endDate: string;
+    durationDays: number;
+    startMouseX: number;
+    barTop: number;
+    barColor: string;
+  } | null>(null);
+  const isDraggingRef = useRef(false);
+  const dayWidthRef = useRef(DAY_WIDTH);
+
+  const [dragPhaseId, setDragPhaseId] = useState<string | null>(null);
+  const [dragGhost, setDragGhost] = useState<{
+    left: number; width: number; top: number; color: string;
+  } | null>(null);
+  const [dragCursorTooltip, setDragCursorTooltip] = useState<{
+    x: number; y: number; newStart: Date; newEnd: Date;
+  } | null>(null);
 
   // Continuous timeline range
   const viewStart = startOfWeek(subWeeks(new Date(), WEEKS_BEFORE), { weekStartsOn: 0 });
@@ -73,7 +97,10 @@ export default function MasterGanttPage() {
   const todayOffset = differenceInDays(new Date(), viewStart);
   const todayPx = todayOffset * DAY_WIDTH;
 
-  useEffect(() => {
+  // Stable ref for viewStart (it's fixed at mount, doesn't change)
+  const viewStartRef = useRef(viewStart);
+
+  const fetchData = useCallback(() => {
     fetch("/api/jobs")
       .then((r) => r.json())
       .then(async (jobList: JobWithPhases[]) => {
@@ -89,6 +116,8 @@ export default function MasterGanttPage() {
       });
   }, []);
 
+  useEffect(() => { fetchData(); }, [fetchData]);
+
   // Scroll to today (centered) once data is loaded
   useEffect(() => {
     if (!loading && !hasScrolledRef.current && scrollRef.current) {
@@ -99,6 +128,88 @@ export default function MasterGanttPage() {
       hasScrolledRef.current = true;
     }
   }, [loading, todayPx]);
+
+  // ── Window mouse event handlers (mouse-based drag) ──────────────────────────
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      const drag = dragDataRef.current;
+      if (!drag) return;
+
+      const dw = dayWidthRef.current;
+      const vs = viewStartRef.current;
+
+      const deltaX = e.clientX - drag.startMouseX;
+      const deltaDays = Math.round(deltaX / dw);
+
+      const newStart = addDays(parseISO(drag.startDate), deltaDays);
+      const newEnd = addDays(parseISO(drag.endDate), deltaDays);
+
+      const newStartDayOffset = differenceInDays(newStart, vs);
+      setDragGhost({
+        left: newStartDayOffset * dw,
+        width: (drag.durationDays + 1) * dw,
+        top: drag.barTop,
+        color: drag.barColor,
+      });
+      setDragCursorTooltip({ x: e.clientX, y: e.clientY, newStart, newEnd });
+    };
+
+    const handleMouseUp = async (e: MouseEvent) => {
+      const drag = dragDataRef.current;
+      if (!drag) return;
+
+      const deltaX = e.clientX - drag.startMouseX;
+
+      // Clear drag state synchronously
+      dragDataRef.current = null;
+      isDraggingRef.current = false;
+      setDragPhaseId(null);
+      setDragGhost(null);
+      setDragCursorTooltip(null);
+
+      // Ignore tiny moves (click vs drag threshold)
+      if (Math.abs(deltaX) < 5) return;
+
+      const dw = dayWidthRef.current;
+      const deltaDays = Math.round(deltaX / dw);
+      if (deltaDays === 0) return;
+
+      const newStart = addDays(parseISO(drag.startDate), deltaDays);
+      const newEnd = addDays(parseISO(drag.endDate), deltaDays);
+      const newStartStr = format(newStart, "yyyy-MM-dd");
+      const newEndStr = format(newEnd, "yyyy-MM-dd");
+
+      // Optimistic update
+      setOptimisticDates((prev) => ({
+        ...prev,
+        [drag.phaseId]: { startDate: newStartStr, endDate: newEndStr },
+      }));
+
+      setSaving(true);
+      try {
+        await fetch(`/api/phases/${drag.phaseId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ startDate: newStartStr, endDate: newEndStr }),
+        });
+        fetchData();
+      } finally {
+        setSaving(false);
+        setOptimisticDates((prev) => {
+          const next = { ...prev };
+          delete next[drag.phaseId];
+          return next;
+        });
+      }
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [fetchData]);
 
   const visibleJobs = jobs.filter((j) => j.visible);
 
@@ -114,10 +225,12 @@ export default function MasterGanttPage() {
     }
   };
 
-  const getBarStyle = (phase: Phase) => {
-    if (!phase.startDate || !phase.endDate) return null;
-    const start = parseISO(phase.startDate);
-    const end = parseISO(phase.endDate);
+  const getBarStyle = (phase: Phase, overrideDates?: { startDate: string; endDate: string }) => {
+    const sd = overrideDates?.startDate ?? phase.startDate;
+    const ed = overrideDates?.endDate ?? phase.endDate;
+    if (!sd || !ed) return null;
+    const start = parseISO(sd);
+    const end = parseISO(ed);
     const leftDays = differenceInDays(start, viewStart);
     const widthDays = Math.max(differenceInDays(end, start) + 1, 1);
     return {
@@ -192,7 +305,35 @@ export default function MasterGanttPage() {
     return lines;
   };
 
+  // ── Mouse-down on phase bar: start drag ──────────────────────────────────────
+  const handleBarMouseDown = (
+    e: React.MouseEvent,
+    phase: Phase,
+    barTop: number,
+    barColor: string,
+  ) => {
+    if (!phase.startDate || !phase.endDate) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setPopover(null);
+
+    const durationDays = differenceInDays(parseISO(phase.endDate), parseISO(phase.startDate));
+
+    dragDataRef.current = {
+      phaseId: phase.id,
+      startDate: phase.startDate,
+      endDate: phase.endDate,
+      durationDays,
+      startMouseX: e.clientX,
+      barTop,
+      barColor,
+    };
+    isDraggingRef.current = true;
+    setDragPhaseId(phase.id);
+  };
+
   const handleBarClick = (e: React.MouseEvent, phase: Phase, jobName: string) => {
+    if (isDraggingRef.current) return;
     e.stopPropagation();
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     setPopover({ phase, jobName, x: rect.left, y: rect.bottom + 8 });
@@ -209,6 +350,11 @@ export default function MasterGanttPage() {
   const depLines = getDependencyLines();
   const monthLabels = getMonthLabels();
 
+  // Header heights for sticky top positioning
+  const MONTH_ROW_HEIGHT = 20; // h-5 = 20px
+  const DAY_ROW_HEIGHT = 40;   // h-10 = 40px
+  const HEADER_HEIGHT = MONTH_ROW_HEIGHT + DAY_ROW_HEIGHT;
+
   return (
     <Layout>
       <div className="p-4 md:p-6 max-w-full" onClick={() => setPopover(null)}>
@@ -220,6 +366,7 @@ export default function MasterGanttPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            {saving && <span className="text-xs text-blue-600 animate-pulse">Saving…</span>}
             <button
               onClick={scrollToToday}
               className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
@@ -271,116 +418,146 @@ export default function MasterGanttPage() {
             No active jobs to display
           </div>
         ) : (
-          <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-            {/* The outer container scrolls horizontally */}
+          <div className="bg-white rounded-xl shadow-sm">
+            {/*
+              ── 2D scroll container ─────────────────────────────────────────────
+              overflow: auto on both axes. Children use position:sticky for
+              both horizontal (left) and vertical (top) pinning.
+            */}
             <div
               ref={scrollRef}
-              className="overflow-x-auto"
-              style={{ position: "relative" }}
+              className="overflow-auto"
+              style={{ maxHeight: "calc(100vh - 260px)", position: "relative" }}
             >
-              <div style={{ display: "flex", width: SIDEBAR_WIDTH + timelineWidth }}>
+              {/* Inner wrapper: explicit full width so sticky left works */}
+              <div style={{ width: SIDEBAR_WIDTH + timelineWidth, minWidth: SIDEBAR_WIDTH + timelineWidth }}>
 
-                {/* ── Sticky left sidebar ───────────────────────────────────── */}
+                {/* ── Sticky header row (top: 0) ────────────────────────────── */}
                 <div
-                  className="shrink-0 border-r border-gray-200 bg-white"
+                  className="flex"
                   style={{
-                    width: SIDEBAR_WIDTH,
                     position: "sticky",
-                    left: 0,
-                    zIndex: 20,
-                    flexShrink: 0,
+                    top: 0,
+                    zIndex: 30,
+                    width: SIDEBAR_WIDTH + timelineWidth,
                   }}
                 >
-                  {/* Month label row spacer */}
-                  <div className="h-5 border-b border-gray-100 bg-gray-50 flex items-center px-3">
-                    <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Month</span>
-                  </div>
-                  {/* Day header spacer */}
-                  <div className="h-10 border-b border-gray-100 flex items-center px-3">
-                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Job / Phase</span>
-                  </div>
-
-                  {/* Rows */}
-                  {rows.map((row, i) => {
-                    if (row.type === "job-header") {
-                      return (
-                        <div
-                          key={`job-${row.job.id}`}
-                          className="flex items-center px-3 border-b border-gray-200"
-                          style={{ height: JOB_HEADER_HEIGHT, backgroundColor: row.job.color + "18" }}
-                        >
-                          <div className="w-2 h-2 rounded-full mr-2 shrink-0" style={{ backgroundColor: row.job.color }} />
-                          <Link
-                            href={`/jobs/${row.job.id}`}
-                            className="text-xs font-bold text-gray-900 hover:underline truncate"
-                          >
-                            {row.job.name}
-                          </Link>
-                        </div>
-                      );
-                    }
-                    return (
-                      <div
-                        key={`phase-${row.phase.id}`}
-                        className="flex items-center px-3 pl-6 border-b border-gray-50"
-                        style={{ height: ROW_HEIGHT }}
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium text-gray-800 truncate">{row.phase.name}</p>
-                          {row.phase.startDate && row.phase.endDate && (
-                            <p className="text-[10px] text-gray-400 truncate">
-                              {format(parseISO(row.phase.startDate), "M/d")} – {format(parseISO(row.phase.endDate), "M/d")}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* ── Timeline area ────────────────────────────────────────── */}
-                <div style={{ width: timelineWidth, flexShrink: 0 }}>
-
-                  {/* Month labels row */}
-                  <div className="relative h-5 border-b border-gray-100 bg-gray-50" style={{ width: timelineWidth }}>
-                    {monthLabels.map((ml, i) => (
-                      <div
-                        key={i}
-                        className="absolute top-0 h-full flex items-center border-l border-gray-200"
-                        style={{ left: ml.left }}
-                      >
-                        <span className="text-[10px] font-semibold text-gray-500 px-1 bg-gray-50 whitespace-nowrap">
-                          {ml.label}
-                        </span>
-                      </div>
-                    ))}
+                  {/* Corner cell: sticky left AND part of sticky top row */}
+                  <div
+                    className="shrink-0 border-r border-b border-gray-200 bg-white"
+                    style={{
+                      width: SIDEBAR_WIDTH,
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 40,
+                    }}
+                  >
+                    <div className="h-5 bg-gray-50 border-b border-gray-100 flex items-center px-3">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Month</span>
+                    </div>
+                    <div className="h-10 flex items-center px-3">
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Job / Phase</span>
+                    </div>
                   </div>
 
-                  {/* Day headers */}
-                  <div className="relative h-10 border-b border-gray-100 flex" style={{ width: timelineWidth }}>
-                    {days.map((day, i) => {
-                      const isWeekendDay = isWeekend(day);
-                      const isToday = isSameDay(day, new Date());
-                      // Only show label on Mondays or when wide enough
-                      const showLabel = day.getDay() === 1 || DAY_WIDTH >= 28;
-                      return (
+                  {/* Date headers column */}
+                  <div
+                    className="shrink-0 bg-white"
+                    style={{ width: timelineWidth }}
+                  >
+                    {/* Month labels row */}
+                    <div className="relative h-5 border-b border-gray-100 bg-gray-50" style={{ width: timelineWidth }}>
+                      {monthLabels.map((ml, i) => (
                         <div
                           key={i}
-                          className={`flex-none border-r border-gray-50 flex flex-col items-center justify-center ${isWeekendDay ? "bg-gray-50" : ""} ${isToday ? "bg-blue-50" : ""}`}
-                          style={{ width: DAY_WIDTH }}
+                          className="absolute top-0 h-full flex items-center border-l border-gray-200"
+                          style={{ left: ml.left }}
                         >
-                          {showLabel && DAY_WIDTH >= 18 && (
-                            <span className={`text-[9px] font-semibold leading-none ${isToday ? "text-blue-600" : isWeekendDay ? "text-gray-400" : "text-gray-500"}`}>
-                              {format(day, "d")}
-                            </span>
-                          )}
+                          <span className="text-[10px] font-semibold text-gray-500 px-1 bg-gray-50 whitespace-nowrap">
+                            {ml.label}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Day headers row */}
+                    <div className="relative h-10 border-b border-gray-100 flex bg-white" style={{ width: timelineWidth }}>
+                      {days.map((day, i) => {
+                        const isWeekendDay = isWeekend(day);
+                        const isToday = isSameDay(day, new Date());
+                        const showLabel = day.getDay() === 1 || DAY_WIDTH >= 28;
+                        return (
+                          <div
+                            key={i}
+                            className={`flex-none border-r border-gray-50 flex flex-col items-center justify-center ${isWeekendDay ? "bg-gray-50" : ""} ${isToday ? "bg-blue-50" : ""}`}
+                            style={{ width: DAY_WIDTH }}
+                          >
+                            {showLabel && DAY_WIDTH >= 18 && (
+                              <span className={`text-[9px] font-semibold leading-none ${isToday ? "text-blue-600" : isWeekendDay ? "text-gray-400" : "text-gray-500"}`}>
+                                {format(day, "d")}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+                {/* ── End sticky header ─────────────────────────────────────── */}
+
+                {/* ── Body row (sidebar + timeline) ─────────────────────────── */}
+                <div className="flex" style={{ width: SIDEBAR_WIDTH + timelineWidth }}>
+
+                  {/* ── Sticky left sidebar ───────────────────────────────────── */}
+                  <div
+                    className="shrink-0 border-r border-gray-200 bg-white"
+                    style={{
+                      width: SIDEBAR_WIDTH,
+                      position: "sticky",
+                      left: 0,
+                      zIndex: 20,
+                    }}
+                  >
+                    {/* Rows */}
+                    {rows.map((row, i) => {
+                      if (row.type === "job-header") {
+                        return (
+                          <div
+                            key={`job-${row.job.id}`}
+                            className="flex items-center px-3 border-b border-gray-200"
+                            style={{ height: JOB_HEADER_HEIGHT, backgroundColor: row.job.color + "18" }}
+                          >
+                            <div className="w-2 h-2 rounded-full mr-2 shrink-0" style={{ backgroundColor: row.job.color }} />
+                            <Link
+                              href={`/jobs/${row.job.id}`}
+                              className="text-xs font-bold text-gray-900 hover:underline truncate"
+                            >
+                              {row.job.name}
+                            </Link>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div
+                          key={`phase-${row.phase.id}`}
+                          className="flex items-center px-3 pl-6 border-b border-gray-50"
+                          style={{ height: ROW_HEIGHT }}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-gray-800 truncate">{row.phase.name}</p>
+                            {row.phase.startDate && row.phase.endDate && (
+                              <p className="text-[10px] text-gray-400 truncate">
+                                {format(parseISO(row.phase.startDate), "M/d")} – {format(parseISO(row.phase.endDate), "M/d")}
+                              </p>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
 
-                  {/* Timeline body */}
-                  <div className="relative" style={{ height: totalHeight, width: timelineWidth }}>
+                  {/* ── Timeline area ────────────────────────────────────────── */}
+                  <div className="shrink-0 relative" style={{ width: timelineWidth, height: totalHeight }}>
 
                     {/* Weekend shading */}
                     {days.map((day, i) =>
@@ -469,35 +646,59 @@ export default function MasterGanttPage() {
                       </svg>
                     )}
 
+                    {/* Ghost bar (drag preview) */}
+                    {dragGhost && (
+                      <div
+                        className="absolute rounded border-2 border-blue-400 pointer-events-none"
+                        style={{
+                          top: dragGhost.top,
+                          left: dragGhost.left,
+                          width: Math.max(dragGhost.width, 4),
+                          height: BAR_HEIGHT,
+                          backgroundColor: dragGhost.color + "40",
+                          zIndex: 12,
+                        }}
+                      />
+                    )}
+
                     {/* Phase bars */}
                     {rows.map((row, i) => {
                       if (row.type !== "phase") return null;
                       const { phase, job } = row;
-                      const bar = getBarStyle(phase);
+                      const overrideDates = optimisticDates[phase.id];
+                      const bar = getBarStyle(phase, overrideDates);
                       const rowTop = rowYPositions[i];
                       const barTop = rowTop + (ROW_HEIGHT - BAR_HEIGHT) / 2;
                       if (!bar) return null;
+                      const isBeingDragged = dragPhaseId === phase.id;
 
                       return (
-                        <button
+                        <div
                           key={phase.id}
+                          onMouseDown={(e) => handleBarMouseDown(e, phase, barTop, bar.color)}
                           onClick={(e) => handleBarClick(e, phase, job.name)}
-                          className="absolute rounded flex items-center px-1.5 text-white text-xs font-medium shadow-sm hover:opacity-90 transition-opacity overflow-hidden"
+                          className={`absolute rounded flex items-center px-1.5 text-white text-xs font-medium shadow-sm overflow-hidden select-none transition-opacity ${
+                            isBeingDragged
+                              ? "opacity-40 cursor-grabbing"
+                              : "cursor-grab hover:opacity-90"
+                          }`}
                           style={{
                             top: barTop,
                             left: bar.left,
                             width: Math.max(bar.width, 4),
                             height: BAR_HEIGHT,
                             backgroundColor: bar.color,
-                            zIndex: 8,
+                            zIndex: isBeingDragged ? 4 : 8,
                           }}
                         >
                           {bar.width > 40 && <span className="truncate">{phase.name}</span>}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
                 </div>
+                {/* ── End body row ──────────────────────────────────────────── */}
+
               </div>
             </div>
 
@@ -519,10 +720,24 @@ export default function MasterGanttPage() {
                 <div className="w-2 h-4 rounded-sm bg-blue-400/70" />
                 <span className="text-xs text-gray-500">Today</span>
               </div>
+              <span className="text-xs text-gray-400 italic">Drag bars to reschedule</span>
             </div>
           </div>
         )}
       </div>
+
+      {/* Drag cursor tooltip (floating near mouse) */}
+      {dragCursorTooltip && (
+        <div
+          className="fixed z-50 pointer-events-none bg-gray-900 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg whitespace-nowrap"
+          style={{
+            top: dragCursorTooltip.y - 48,
+            left: dragCursorTooltip.x + 14,
+          }}
+        >
+          → {format(dragCursorTooltip.newStart, "MMM d")} – {format(dragCursorTooltip.newEnd, "MMM d, yyyy")}
+        </div>
+      )}
 
       {/* Popover */}
       {popover && (
