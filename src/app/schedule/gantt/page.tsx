@@ -73,6 +73,8 @@ export default function MasterGanttPage() {
     endDate: string;
     durationDays: number;
     startMouseX: number;
+    startScrollLeft: number;   // scroll offset at drag-start (for delta calc)
+    barStartLeft: number;      // bar's left px at drag-start
     barTop: number;
     barColor: string;
   } | null>(null);
@@ -146,12 +148,11 @@ export default function MasterGanttPage() {
       const vs = viewStartRef.current;
       const td = totalDaysRef.current;
 
-      // Re-fetch rect on every mousemove so scroll changes are always current
-      const containerRect = scrollRef.current.getBoundingClientRect();
-      const scrollLeft = scrollRef.current.scrollLeft;
-      // scrollRef includes the sidebar, so subtract SIDEBAR_WIDTH from the offset
-      const relativeX = e.clientX - containerRect.left + scrollLeft - SIDEBAR_WIDTH;
-      const dayIndex = Math.max(0, Math.min(Math.floor(relativeX / dw), td - 1));
+      // Delta-based: mouse delta + scroll delta = total bar movement in pixels
+      const currentScrollLeft = scrollRef.current.scrollLeft;
+      const pixelDelta = (e.clientX - drag.startMouseX) + (currentScrollLeft - drag.startScrollLeft);
+      const newBarLeft = drag.barStartLeft + pixelDelta;
+      const dayIndex = Math.max(0, Math.min(Math.round(newBarLeft / dw), td - 1));
 
       const newStart = addDays(vs, dayIndex);
       const newEnd = addDays(newStart, drag.durationDays);
@@ -169,7 +170,7 @@ export default function MasterGanttPage() {
       const drag = dragDataRef.current;
       if (!drag) return;
 
-      const deltaX = e.clientX - drag.startMouseX;
+      const pixelDeltaX = e.clientX - drag.startMouseX;
 
       // Clear drag state synchronously
       dragDataRef.current = null;
@@ -179,17 +180,18 @@ export default function MasterGanttPage() {
       setDragCursorTooltip(null);
 
       // Ignore tiny moves (click vs drag threshold)
-      if (Math.abs(deltaX) < 5) return;
+      if (Math.abs(pixelDeltaX) < 5) return;
       if (!scrollRef.current) return;
 
       const dw = dayWidthRef.current;
       const vs = viewStartRef.current;
       const td = totalDaysRef.current;
 
-      const containerRect = scrollRef.current.getBoundingClientRect();
-      const scrollLeft = scrollRef.current.scrollLeft;
-      const relativeX = e.clientX - containerRect.left + scrollLeft - SIDEBAR_WIDTH;
-      const dayIndex = Math.max(0, Math.min(Math.floor(relativeX / dw), td - 1));
+      // Same delta calculation as mousemove for consistency
+      const currentScrollLeft = scrollRef.current.scrollLeft;
+      const pixelDelta = pixelDeltaX + (currentScrollLeft - drag.startScrollLeft);
+      const newBarLeft = drag.barStartLeft + pixelDelta;
+      const dayIndex = Math.max(0, Math.min(Math.round(newBarLeft / dw), td - 1));
 
       const newStart = addDays(vs, dayIndex);
       const newEnd = addDays(newStart, drag.durationDays);
@@ -332,12 +334,15 @@ export default function MasterGanttPage() {
     barTop: number,
     barColor: string,
   ) => {
-    if (!phase.startDate || !phase.endDate) return;
+    if (!phase.startDate || !phase.endDate || !scrollRef.current) return;
     e.preventDefault();
     e.stopPropagation();
     setPopover(null);
 
     const durationDays = differenceInDays(parseISO(phase.endDate), parseISO(phase.startDate));
+    // Bar's current left pixel position in the timeline
+    const barStartDay = differenceInDays(parseISO(phase.startDate), viewStartRef.current);
+    const barStartLeft = barStartDay * DAY_WIDTH;
 
     dragDataRef.current = {
       phaseId: phase.id,
@@ -345,6 +350,8 @@ export default function MasterGanttPage() {
       endDate: phase.endDate,
       durationDays,
       startMouseX: e.clientX,
+      startScrollLeft: scrollRef.current.scrollLeft,
+      barStartLeft,
       barTop,
       barColor,
     };
