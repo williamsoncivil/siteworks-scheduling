@@ -19,10 +19,11 @@ model User {
   role              String          @default("EMPLOYEE")
   phone             String?
   createdAt         DateTime        @default(now())
-  schedules         ScheduleEntry[] @relation("Worker")
-  supervisorEntries ScheduleEntry[] @relation("Supervisor")
-  messages          Message[]
-  documents         Document[]
+  schedules            ScheduleEntry[] @relation("Worker")
+  supervisorEntries    ScheduleEntry[] @relation("Supervisor")
+  messages             Message[]
+  documents            Document[]
+  messagesLastReadAt   DateTime?
 }
 
 model Job {

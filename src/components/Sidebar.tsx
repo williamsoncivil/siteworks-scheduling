@@ -12,6 +12,7 @@ const navLinks = [
   { href: "/schedule/gantt", label: "Gantt Chart", icon: "📊" },
   { href: "/schedule/timeline", label: "People Timeline", icon: "👤" },
   { href: "/files", label: "Files", icon: "📁" },
+  { href: "/messages", label: "Messages", icon: "💬", badge: true },
   { href: "/people", label: "People", icon: "👥" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
@@ -20,6 +21,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
   const [collapsed, setCollapsed] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Persist collapse state
   useEffect(() => {
@@ -27,11 +29,26 @@ export default function Sidebar() {
     if (stored === "true") setCollapsed(true);
   }, []);
 
+  // Fetch unread count on mount and periodically
+  useEffect(() => {
+    const fetchUnread = () => {
+      fetch("/api/messages/unread-count")
+        .then((r) => r.json())
+        .then((d) => setUnreadCount(d.count ?? 0))
+        .catch(() => {});
+    };
+    fetchUnread();
+    const interval = setInterval(fetchUnread, 60_000); // refresh every minute
+    // Reset badge when messages page is opened
+    const onRead = () => setUnreadCount(0);
+    window.addEventListener("messages-read", onRead);
+    return () => { clearInterval(interval); window.removeEventListener("messages-read", onRead); };
+  }, []);
+
   const toggle = () => {
     setCollapsed((prev) => {
       const next = !prev;
       localStorage.setItem("sidebar-collapsed", String(next));
-      // Dispatch custom event so Layout (same tab) updates its margin
       window.dispatchEvent(new CustomEvent("sidebar-toggle", { detail: { collapsed: next } }));
       return next;
     });
@@ -72,23 +89,42 @@ export default function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 py-4 px-2">
-        {navLinks.map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            title={collapsed ? link.label : undefined}
-            className={`flex items-center gap-3 px-2 py-2.5 rounded-lg mb-1 text-sm font-medium transition-colors ${
-              collapsed ? "justify-center" : ""
-            } ${
-              isActive(link.href)
-                ? "bg-blue-600 text-white"
-                : "text-slate-400 hover:text-white hover:bg-slate-700"
-            }`}
-          >
-            <span className="text-base">{link.icon}</span>
-            {!collapsed && <span>{link.label}</span>}
-          </Link>
-        ))}
+        {navLinks.map((link) => {
+          const showBadge = link.badge && unreadCount > 0;
+          return (
+            <Link
+              key={link.href}
+              href={link.href}
+              title={collapsed ? link.label : undefined}
+              className={`flex items-center gap-3 px-2 py-2.5 rounded-lg mb-1 text-sm font-medium transition-colors ${
+                collapsed ? "justify-center" : ""
+              } ${
+                isActive(link.href)
+                  ? "bg-blue-600 text-white"
+                  : "text-slate-400 hover:text-white hover:bg-slate-700"
+              }`}
+            >
+              <span className="text-base relative shrink-0">
+                {link.icon}
+                {showBadge && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-0.5 leading-none">
+                    {unreadCount > 99 ? "99+" : unreadCount}
+                  </span>
+                )}
+              </span>
+              {!collapsed && (
+                <span className="flex-1 flex items-center justify-between">
+                  {link.label}
+                  {showBadge && (
+                    <span className="bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5 leading-none">
+                      {unreadCount > 99 ? "99+" : unreadCount}
+                    </span>
+                  )}
+                </span>
+              )}
+            </Link>
+          );
+        })}
       </nav>
 
       {/* User / sign out */}
