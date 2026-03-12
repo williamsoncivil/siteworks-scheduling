@@ -67,6 +67,76 @@ function nextBusinessDayAfter(dateStr: string): string {
   } catch { return ""; }
 }
 
+/**
+ * Given a predecessor phase, dep type, and lag, compute new start + end dates
+ * for the successor, preserving its current business-day duration.
+ */
+function computeDatesFromPredecessor(
+  predPhase: { startDate?: string | null; endDate?: string | null },
+  type: "FINISH_TO_START" | "START_TO_START" | "FINISH_TO_FINISH" | "START_TO_FINISH",
+  lagDays: number,
+  currentDuration: number
+): { startDate: string; endDate: string } | null {
+  const predStart = predPhase.startDate?.split("T")[0] ?? "";
+  const predEnd = predPhase.endDate?.split("T")[0] ?? "";
+
+  let newStart = "";
+  let newEnd = "";
+
+  switch (type) {
+    case "FINISH_TO_START": {
+      if (!predEnd) return null;
+      // Start = next business day after (predEnd + lagDays calendar days)
+      let d = addDays(parseISO(predEnd), lagDays + 1);
+      while (isWeekendLocal(d)) d = addDays(d, 1);
+      newStart = format(d, "yyyy-MM-dd");
+      newEnd = endFromDuration(newStart, currentDuration);
+      break;
+    }
+    case "START_TO_START": {
+      if (!predStart) return null;
+      let d = addDays(parseISO(predStart), lagDays);
+      while (isWeekendLocal(d)) d = addDays(d, 1);
+      newStart = format(d, "yyyy-MM-dd");
+      newEnd = endFromDuration(newStart, currentDuration);
+      break;
+    }
+    case "FINISH_TO_FINISH": {
+      if (!predEnd) return null;
+      let d = addDays(parseISO(predEnd), lagDays);
+      while (isWeekendLocal(d)) d = addDays(d, 1);
+      newEnd = format(d, "yyyy-MM-dd");
+      // Walk backward to find start
+      let start = parseISO(newEnd);
+      let remaining = currentDuration - 1;
+      while (remaining > 0) {
+        start = addDays(start, -1);
+        if (!isWeekendLocal(start)) remaining--;
+      }
+      while (isWeekendLocal(start)) start = addDays(start, -1);
+      newStart = format(start, "yyyy-MM-dd");
+      break;
+    }
+    case "START_TO_FINISH": {
+      if (!predStart) return null;
+      let d = addDays(parseISO(predStart), lagDays);
+      while (isWeekendLocal(d)) d = addDays(d, 1);
+      newEnd = format(d, "yyyy-MM-dd");
+      let start = parseISO(newEnd);
+      let remaining = currentDuration - 1;
+      while (remaining > 0) {
+        start = addDays(start, -1);
+        if (!isWeekendLocal(start)) remaining--;
+      }
+      while (isWeekendLocal(start)) start = addDays(start, -1);
+      newStart = format(start, "yyyy-MM-dd");
+      break;
+    }
+  }
+
+  return newStart && newEnd ? { startDate: newStart, endDate: newEnd } : null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 type TabId = "overview" | "phases" | "schedule" | "files" | "messages" | "production";
@@ -234,6 +304,7 @@ export default function JobDetailPage() {
   } | null>(null);
   const [editDepType, setEditDepType] = useState<"FINISH_TO_START" | "START_TO_START" | "FINISH_TO_FINISH" | "START_TO_FINISH">("FINISH_TO_START");
   const [editDepLagDays, setEditDepLagDays] = useState(0);
+  const [editDepNewPredecessorId, setEditDepNewPredecessorId] = useState("");
   const [savingEditDep, setSavingEditDep] = useState(false);
 
   // Cascade toast
@@ -548,6 +619,22 @@ export default function JobDetailPage() {
         alert(err.error || "Failed to add dependency");
         return;
       }
+      // Auto-apply dates from predecessor
+      const predPhase = phases.find((p) => p.id === depPredecessorId);
+      const thisPhase = phases.find((p) => p.id === addDepModal.phaseId);
+      if (predPhase && thisPhase) {
+        const currentStart = thisPhase.startDate?.split("T")[0] ?? "";
+        const currentEnd = thisPhase.endDate?.split("T")[0] ?? "";
+        const duration = (currentStart && currentEnd) ? (durationFromDates(currentStart, currentEnd) ?? 5) : 5;
+        const newDates = computeDatesFromPredecessor(predPhase, depType, depLagDays, duration);
+        if (newDates) {
+          await fetch(`/api/phases/${addDepModal.phaseId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ startDate: newDates.startDate, endDate: newDates.endDate }),
+          });
+        }
+      }
       setAddDepModal(null);
       fetchJob();
     } finally {
@@ -564,18 +651,28 @@ export default function JobDetailPage() {
     });
     setEditDepType(dep.type);
     setEditDepLagDays(dep.lagDays);
+    setEditDepNewPredecessorId(dep.predecessorId);
   };
 
   const saveEditDependency = async () => {
     if (!editDepModal) return;
     setSavingEditDep(true);
     try {
-      // The POST endpoint uses upsert, so re-posting with the same predecessorId updates type/lagDays
+      const predecessorChanged = editDepNewPredecessorId !== editDepModal.predecessorId;
+
+      // If predecessor changed, delete the old dependency first
+      if (predecessorChanged && editDepModal.predecessorId) {
+        await fetch(`/api/phases/${editDepModal.phaseId}/dependencies?predecessorId=${editDepModal.predecessorId}`, {
+          method: "DELETE",
+        });
+      }
+
+      // Create/upsert with the (possibly new) predecessorId
       const res = await fetch(`/api/phases/${editDepModal.phaseId}/dependencies`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          predecessorId: editDepModal.predecessorId,
+          predecessorId: editDepNewPredecessorId,
           type: editDepType,
           lagDays: editDepLagDays,
         }),
@@ -585,6 +682,24 @@ export default function JobDetailPage() {
         alert(err.error || "Failed to update dependency");
         return;
       }
+
+      // Auto-apply dates from the (possibly new) predecessor
+      const predPhase = phases.find((p) => p.id === editDepNewPredecessorId);
+      const thisPhase = phases.find((p) => p.id === editDepModal.phaseId);
+      if (predPhase && thisPhase) {
+        const currentStart = thisPhase.startDate?.split("T")[0] ?? "";
+        const currentEnd = thisPhase.endDate?.split("T")[0] ?? "";
+        const duration = (currentStart && currentEnd) ? (durationFromDates(currentStart, currentEnd) ?? 5) : 5;
+        const newDates = computeDatesFromPredecessor(predPhase, editDepType, editDepLagDays, duration);
+        if (newDates) {
+          await fetch(`/api/phases/${editDepModal.phaseId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ startDate: newDates.startDate, endDate: newDates.endDate }),
+          });
+        }
+      }
+
       setEditDepModal(null);
       fetchJob();
     } finally {
@@ -1852,10 +1967,27 @@ export default function JobDetailPage() {
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-1">Edit Predecessor</h3>
             <p className="text-sm text-gray-500 mb-4">
-              Editing dependency from <strong>{editDepModal.predecessorName}</strong> → <strong>{editDepModal.phaseName}</strong>
+              For <strong>{editDepModal.phaseName}</strong>
             </p>
 
             <div className="space-y-4">
+              {/* Predecessor selector — can be changed */}
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Predecessor Phase</label>
+                <select
+                  value={editDepNewPredecessorId}
+                  onChange={(e) => setEditDepNewPredecessorId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {phases.filter((p) => p.id !== editDepModal.phaseId).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {p.endDate ? ` (ends ${format(parseISO(p.endDate.split("T")[0]), "MMM d")})` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-gray-700 mb-1">Dependency Type</label>
                 <select
@@ -1879,23 +2011,26 @@ export default function JobDetailPage() {
                   onChange={(e) => setEditDepLagDays(parseInt(e.target.value) || 0)}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <p className="text-xs text-gray-400 mt-1">Business days to wait after the dependency condition is met</p>
               </div>
 
-              {/* Show suggested start date for FINISH_TO_START */}
-              {editDepType === "FINISH_TO_START" && (() => {
-                const pred = phases.find((p) => p.id === editDepModal.predecessorId);
-                if (pred?.endDate) {
-                  const suggested = nextBusinessDayAfter(pred.endDate.split("T")[0]);
-                  return (
-                    <div className="bg-blue-50 rounded-lg p-3 text-xs text-blue-700">
-                      📅 <strong>{editDepModal.phaseName}</strong> should start on{" "}
-                      <strong>{format(parseISO(suggested), "EEE, MMM d, yyyy")}</strong>
-                      {editDepLagDays > 0 && ` + ${editDepLagDays} lag day(s)`}
-                    </div>
-                  );
-                }
-                return null;
+              {/* Live date preview — updates as user changes predecessor/type/lag */}
+              {(() => {
+                const predPhase = phases.find((p) => p.id === editDepNewPredecessorId);
+                const thisPhase = phases.find((p) => p.id === editDepModal.phaseId);
+                if (!predPhase || !thisPhase) return null;
+                const currentStart = thisPhase.startDate?.split("T")[0] ?? "";
+                const currentEnd = thisPhase.endDate?.split("T")[0] ?? "";
+                const duration = (currentStart && currentEnd) ? (durationFromDates(currentStart, currentEnd) ?? 5) : 5;
+                const newDates = computeDatesFromPredecessor(predPhase, editDepType, editDepLagDays, duration);
+                if (!newDates) return null;
+                return (
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-xs text-green-800">
+                    <p className="font-semibold mb-1">📅 Dates will update to:</p>
+                    <p>Start: <strong>{format(parseISO(newDates.startDate), "EEE, MMM d, yyyy")}</strong></p>
+                    <p>End: <strong>{format(parseISO(newDates.endDate), "EEE, MMM d, yyyy")}</strong></p>
+                    <p className="text-green-600 mt-1">({duration} working day{duration !== 1 ? "s" : ""})</p>
+                  </div>
+                );
               })()}
             </div>
 
@@ -1911,7 +2046,7 @@ export default function JobDetailPage() {
                 disabled={savingEditDep}
                 className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
-                {savingEditDep ? "Saving..." : "Save Changes"}
+                {savingEditDep ? "Saving..." : "Save & Apply Dates"}
               </button>
             </div>
           </div>
