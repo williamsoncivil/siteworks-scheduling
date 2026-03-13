@@ -648,35 +648,46 @@ export default function MasterGanttPage() {
                       );
                     })}
 
-                    {/* Dependency arrows — rendered AFTER bars, drawn inline (no marker refs) */}
-                    {depArrows.length > 0 && (
-                      <svg
-                        className="absolute inset-0 pointer-events-none"
-                        style={{ width: timelineWidth, height: totalHeight, overflow: "visible", zIndex: 15 }}
-                      >
-                        {depArrows.map((a, i) => {
-                          const stub = 14;
-                          const ex = a.x1 + stub;
-                          // Elbow path — stop 6px before target so arrowhead tip lands on bar edge
-                          const ax = a.x2 - 6;
-                          let d: string;
-                          if (ax >= ex) {
-                            d = `M ${a.x1} ${a.y1} H ${ex} V ${a.y2} H ${ax}`;
-                          } else {
-                            const midY = (a.y1 + a.y2) / 2;
-                            d = `M ${a.x1} ${a.y1} H ${ex} V ${midY} H ${a.x2 - stub} V ${a.y2} H ${ax}`;
-                          }
-                          // Arrowhead triangle pointing right at (a.x2, a.y2)
-                          const ah = `${ax},${a.y2 - 4} ${a.x2},${a.y2} ${ax},${a.y2 + 4}`;
-                          return (
-                            <g key={i}>
-                              <path d={d} fill="none" stroke="#475569" strokeWidth="1.5" opacity="0.7" />
-                              <polygon points={ah} fill="#475569" opacity="0.7" />
-                            </g>
-                          );
-                        })}
-                      </svg>
-                    )}
+                    {/* Dependency arrows — div-based for reliable rendering */}
+                    {depArrows.map((a, i) => {
+                      const stub = 14;
+                      const ex = a.x1 + stub; // elbow X
+                      const runX = ex;         // horizontal run starts here
+                      const runEnd = a.x2 - 5; // stop before bar edge for arrowhead
+                      const topY = Math.min(a.y1, a.y2);
+                      const botY = Math.max(a.y1, a.y2);
+                      const color = "#64748b";
+                      const thick = 1.5;
+                      const canSimple = runEnd >= ex; // normal case: succ is to the right
+                      if (canSimple) {
+                        return (
+                          <div key={i} className="pointer-events-none" style={{ position: "absolute", zIndex: 16, inset: 0 }}>
+                            {/* Horizontal stub from pred right edge */}
+                            <div style={{ position: "absolute", left: a.x1, top: a.y1 - thick / 2, width: stub, height: thick, backgroundColor: color, opacity: 0.75 }} />
+                            {/* Vertical connector */}
+                            <div style={{ position: "absolute", left: ex - thick / 2, top: topY, width: thick, height: botY - topY + thick, backgroundColor: color, opacity: 0.75 }} />
+                            {/* Horizontal run to successor */}
+                            <div style={{ position: "absolute", left: ex, top: a.y2 - thick / 2, width: Math.max(runEnd - ex, 0), height: thick, backgroundColor: color, opacity: 0.75 }} />
+                            {/* Arrowhead (right-pointing triangle) */}
+                            <div style={{ position: "absolute", left: runEnd, top: a.y2 - 4, width: 0, height: 0, borderTop: "4px solid transparent", borderBottom: "4px solid transparent", borderLeft: `5px solid ${color}`, opacity: 0.85 }} />
+                          </div>
+                        );
+                      } else {
+                        // Overlap: route via mid-row gap
+                        const midY = (a.y1 + a.y2) / 2;
+                        const leftEnd = a.x2 - stub - 5;
+                        return (
+                          <div key={i} className="pointer-events-none" style={{ position: "absolute", zIndex: 16, inset: 0 }}>
+                            <div style={{ position: "absolute", left: a.x1, top: a.y1 - thick / 2, width: stub, height: thick, backgroundColor: color, opacity: 0.75 }} />
+                            <div style={{ position: "absolute", left: ex - thick / 2, top: Math.min(a.y1, midY), width: thick, height: Math.abs(midY - a.y1), backgroundColor: color, opacity: 0.75 }} />
+                            <div style={{ position: "absolute", left: Math.min(ex, leftEnd) - thick / 2, top: midY - thick / 2, width: Math.abs(leftEnd - ex) + thick, height: thick, backgroundColor: color, opacity: 0.75 }} />
+                            <div style={{ position: "absolute", left: leftEnd - thick / 2, top: Math.min(midY, a.y2), width: thick, height: Math.abs(a.y2 - midY), backgroundColor: color, opacity: 0.75 }} />
+                            <div style={{ position: "absolute", left: leftEnd, top: a.y2 - thick / 2, width: Math.max(a.x2 - 5 - leftEnd, 0), height: thick, backgroundColor: color, opacity: 0.75 }} />
+                            <div style={{ position: "absolute", left: a.x2 - 5, top: a.y2 - 4, width: 0, height: 0, borderTop: "4px solid transparent", borderBottom: "4px solid transparent", borderLeft: `5px solid ${color}`, opacity: 0.85 }} />
+                          </div>
+                        );
+                      }
+                    })}
                   </div>
                 </div>
                 {/* ── End body row ──────────────────────────────────────────── */}
