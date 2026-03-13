@@ -382,7 +382,7 @@ export default function JobDetailPage() {
   const fetchSchedule = useCallback(async () => {
     const res = await fetch(`/api/schedule?jobId=${jobId}`);
     const data = await res.json();
-    setScheduleEntries(data);
+    setScheduleEntries(data.entries ?? data);
   }, [jobId]);
 
   const fetchMessages = useCallback(async () => {

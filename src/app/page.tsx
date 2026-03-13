@@ -49,9 +49,9 @@ export default function DashboardPage() {
       fetch(`/api/schedule?userId=${session.user.id}&week=${weekStart}`).then((r) => r.json()),
       fetch(`/api/schedule?week=${weekStart}`).then((r) => r.json()),
     ]).then(([todayData, weekData, allWeekData]) => {
-      setTodayEntries(todayData);
-      setWeekEntries(weekData.filter((e: ScheduleEntry) => !isToday(parseISO(e.date))));
-      setAllWeekEntries(allWeekData);
+      setTodayEntries(todayData.entries ?? todayData);
+      setWeekEntries((weekData.entries ?? weekData).filter((e: ScheduleEntry) => !isToday(parseISO(e.date))));
+      setAllWeekEntries(allWeekData.entries ?? allWeekData);
 
       // Detect double-bookings across all users this week
       const dateUserMap: Record<string, Record<string, ScheduleEntry[]>> = {};
