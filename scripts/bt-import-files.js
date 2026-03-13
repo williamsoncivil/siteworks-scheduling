@@ -19,6 +19,7 @@
 
 const WebSocket = require('/opt/homebrew/lib/node_modules/openclaw/node_modules/ws');
 const https = require('https');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
@@ -28,7 +29,7 @@ const JOB_NAME = '392 West Alder';  // Must match job name in Williamson Schedul
 // ─────────────────────────────────────────────────────────────────────────────
 
 const IMPORT_TOKEN  = 'bt-import-2026-williamson';
-const APP_HOST      = 'williamson-scheduling.vercel.app';
+const APP_HOST      = 'siteworkshq.com';
 const B64_LIMIT     = 4 * 1024 * 1024; // 4MB threshold for large file path
 
 // Load Vercel Blob token from .env
@@ -45,7 +46,7 @@ const { upload } = require('@vercel/blob/client');
 
 async function getPageId() {
   return new Promise((resolve, reject) => {
-    https.get('http://127.0.0.1:18800/json'.replace('https', 'http'), res => {
+    http.get('http://127.0.0.1:18800/json', res => {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {

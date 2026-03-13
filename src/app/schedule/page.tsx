@@ -9,6 +9,8 @@ import {
   endOfWeek,
   addWeeks,
   subWeeks,
+  addMonths,
+  subMonths,
   eachDayOfInterval,
   parseISO,
   isSameDay,
@@ -83,8 +85,8 @@ export default function SchedulePage() {
     return list.filter((e) => isSameDay(parseISO(e.date), day));
   };
 
-  const prevPeriod = () => setCurrentDate(subWeeks(currentDate, 1));
-  const nextPeriod = () => setCurrentDate(addWeeks(currentDate, 1));
+  const prevPeriod = () => setCurrentDate(viewMode === "month" ? subMonths(currentDate, 1) : subWeeks(currentDate, 1));
+  const nextPeriod = () => setCurrentDate(viewMode === "month" ? addMonths(currentDate, 1) : addWeeks(currentDate, 1));
 
   // For month view
   const monthStart = startOfMonth(currentDate);
