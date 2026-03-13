@@ -614,39 +614,6 @@ export default function MasterGanttPage() {
                       );
                     })}
 
-                    {/* Dependency arrows */}
-                    {depArrows.length > 0 && (
-                      <svg
-                        className="absolute inset-0 pointer-events-none"
-                        style={{ width: timelineWidth, height: totalHeight, overflow: "visible" }}
-                      >
-                        <defs>
-                          <marker id="dep-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-                            <path d="M0,0 L0,6 L6,3 z" fill="#6366f1" opacity="0.75" />
-                          </marker>
-                        </defs>
-                        {depArrows.map((a, i) => {
-                          // Elbow connector: right from pred end → jog down/up → left into succ start
-                          const elbowX = a.x1 + 12;
-                          const path = a.x2 > elbowX
-                            ? `M ${a.x1} ${a.y1} H ${elbowX} V ${a.y2} H ${a.x2}`
-                            : `M ${a.x1} ${a.y1} H ${elbowX} V ${(a.y1 + a.y2) / 2} H ${a.x2 - 12} V ${a.y2} H ${a.x2}`;
-                          return (
-                            <path
-                              key={i}
-                              d={path}
-                              fill="none"
-                              stroke="#6366f1"
-                              strokeWidth="1.5"
-                              strokeDasharray="5 3"
-                              opacity="0.65"
-                              markerEnd="url(#dep-arrow)"
-                            />
-                          );
-                        })}
-                      </svg>
-                    )}
-
                     {/* Phase bars */}
                     {rows.map((row, i) => {
                       if (row.type !== "phase") return null;
@@ -680,6 +647,45 @@ export default function MasterGanttPage() {
                         </div>
                       );
                     })}
+
+                    {/* Dependency arrows — rendered AFTER bars so they appear on top */}
+                    {depArrows.length > 0 && (
+                      <svg
+                        className="absolute inset-0 pointer-events-none"
+                        style={{ width: timelineWidth, height: totalHeight, overflow: "visible", zIndex: 15 }}
+                      >
+                        <defs>
+                          <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                            <polygon points="0 0, 8 4, 0 8" fill="#4f46e5" />
+                          </marker>
+                        </defs>
+                        {depArrows.map((a, i) => {
+                          // Stub right 20px from predecessor end, jog to successor row, arrive at successor start
+                          const stub = 20;
+                          const ex = a.x1 + stub;
+                          let d: string;
+                          if (a.x2 >= ex) {
+                            // Simple case: successor is to the right → straight elbow
+                            d = `M ${a.x1} ${a.y1} H ${ex} V ${a.y2} H ${a.x2}`;
+                          } else {
+                            // Overlap case: route around by going down/up between rows
+                            const midY = (a.y1 + a.y2) / 2;
+                            d = `M ${a.x1} ${a.y1} H ${ex} V ${midY} H ${a.x2 - stub} V ${a.y2} H ${a.x2}`;
+                          }
+                          return (
+                            <path
+                              key={i}
+                              d={d}
+                              fill="none"
+                              stroke="#4f46e5"
+                              strokeWidth="1.5"
+                              opacity="0.55"
+                              markerEnd="url(#arrowhead)"
+                            />
+                          );
+                        })}
+                      </svg>
+                    )}
                   </div>
                 </div>
                 {/* ── End body row ──────────────────────────────────────────── */}
