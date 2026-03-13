@@ -28,7 +28,14 @@ export async function POST(req: NextRequest) {
   const filename = `${timestamp}_${safeName}`;
 
   // Upload to Vercel Blob
-  const blob = await put(filename, buffer, { access: "public", contentType: file.type });
+  let blob;
+  try {
+    blob = await put(filename, buffer, { access: "public", contentType: file.type || "application/octet-stream" });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("Vercel Blob upload error:", msg);
+    return NextResponse.json({ error: `Blob upload failed: ${msg}` }, { status: 500 });
+  }
 
   const fileUrl = blob.url;
   const fileType = file.type || "application/octet-stream";
