@@ -69,7 +69,7 @@ interface Phase {
   endDate: string | null;
   dependsOnId: string | null;
   completion: number;
-  predecessorDeps?: PhaseDep[];
+  successorDeps?: PhaseDep[]; // deps where this phase IS the successor (tells us its predecessors)
 }
 
 interface Worker {
@@ -247,7 +247,7 @@ export default function MasterGanttPage() {
     rows.forEach((row, rowIdx) => {
       if (row.type !== "phase") return;
       const { phase } = row;
-      const deps = phase.predecessorDeps ?? (phase.dependsOnId ? [{ predecessorId: phase.dependsOnId, type: "FINISH_TO_START", lagDays: 0 }] : []);
+      const deps = phase.successorDeps ?? (phase.dependsOnId ? [{ predecessorId: phase.dependsOnId, type: "FINISH_TO_START", lagDays: 0 }] : []);
       deps.forEach((dep) => {
         const predRowIdx = rows.findIndex((r) => r.type === "phase" && r.phase.id === dep.predecessorId);
         if (predRowIdx < 0) return;

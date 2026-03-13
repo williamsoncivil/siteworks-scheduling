@@ -36,7 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     where: { jobId: params.id },
     orderBy: { orderIndex: "asc" },
     include: {
-      predecessorDeps: {
+      successorDeps: {
         select: { predecessorId: true, type: true, lagDays: true },
       },
     },
