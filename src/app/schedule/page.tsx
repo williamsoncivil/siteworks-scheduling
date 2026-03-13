@@ -26,7 +26,7 @@ interface ScheduleEntry {
   endTime: string;
   notes: string | null;
   job: { id: string; name: string; color: string };
-  phase: { id: string; name: string } | null;
+  phase: { id: string; name: string; completion: number } | null;
   user: { id: string; name: string; role: string };
 }
 
@@ -63,6 +63,7 @@ export default function SchedulePage() {
     startTime: string;
     endTime: string;
     notes: string;
+    completion: number;
     additionalUserIds: Set<string>;
     saving: boolean;
     error: string;
@@ -151,6 +152,7 @@ export default function SchedulePage() {
       startTime: entry.startTime,
       endTime: entry.endTime,
       notes: entry.notes ?? "",
+      completion: entry.phase?.completion ?? 0,
       additionalUserIds: new Set(),
       saving: false,
       error: "",
@@ -172,6 +174,15 @@ export default function SchedulePage() {
         }),
       });
       if (!res.ok) throw new Error("Save failed");
+
+      // Save completion if phase exists
+      if (entryModal.entry.phase?.id) {
+        await fetch(`/api/phases/${entryModal.entry.phase.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ completion: entryModal.completion }),
+        });
+      }
 
       // Create schedule entries for additional people
       if (entryModal.additionalUserIds.size > 0) {
@@ -633,6 +644,18 @@ export default function SchedulePage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
               </div>
             </div>
+              {entryModal.entry.phase && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Phase Completion</label>
+                  <select value={entryModal.completion}
+                    onChange={(e) => setEntryModal((m) => m ? { ...m, completion: parseInt(e.target.value) } : null)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    {[0,10,20,25,30,40,50,60,70,75,80,90,95,100].map((v) => (
+                      <option key={v} value={v}>{v === 100 ? "✓ Complete (100%)" : `${v}%`}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {users.filter((u) => u.id !== entryModal.entry.user.id).length > 0 && (
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1.5">Add More People <span className="text-gray-400">(optional)</span></label>

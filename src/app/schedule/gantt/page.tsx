@@ -205,10 +205,18 @@ export default function MasterGanttPage() {
     | { type: "job-header"; job: JobWithPhases; rowIndex: number }
     | { type: "phase"; phase: Phase; job: JobWithPhases; rowIndex: number };
 
+  const oneWeekAgo = new Date();
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
   const rows: RowItem[] = [];
   visibleJobs.forEach((job) => {
     rows.push({ type: "job-header", job, rowIndex: rows.length });
     job.phases.forEach((phase) => {
+      // Hide phases that are 100% complete AND ended more than 1 week ago
+      if ((phase.completion ?? 0) >= 100 && phase.endDate) {
+        const endDate = parseDate(phase.endDate);
+        if (endDate < oneWeekAgo) return;
+      }
       rows.push({ type: "phase", phase, job, rowIndex: rows.length });
     });
   });

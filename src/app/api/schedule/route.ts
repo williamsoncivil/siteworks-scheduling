@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
       user: { select: { id: true, name: true, role: true } },
       supervisor: { select: { id: true, name: true } },
       job: { select: { id: true, name: true, color: true } },
-      phase: { select: { id: true, name: true } },
+      phase: { select: { id: true, name: true, completion: true } },
     },
   });
 
@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
       user: { select: { id: true, name: true } },
       supervisor: { select: { id: true, name: true } },
       job: { select: { id: true, name: true, color: true } },
-      phase: { select: { id: true, name: true } },
+      phase: { select: { id: true, name: true, completion: true } },
     },
   });
 

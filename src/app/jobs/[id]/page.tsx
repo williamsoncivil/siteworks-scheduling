@@ -534,6 +534,8 @@ export default function JobDetailPage() {
 
   const startEditPhaseDates = (phase: Phase) => {
     setEditingPhaseId(phase.id);
+    // Auto-expand the phase when editing dates
+    setExpandedPhaseIds((prev) => { const next = new Set(prev); next.add(phase.id); return next; });
     const start = phase.startDate ? phase.startDate.split("T")[0] : "";
     const end = phase.endDate ? phase.endDate.split("T")[0] : "";
     setPhaseEditStart(start);

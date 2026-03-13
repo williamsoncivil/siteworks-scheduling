@@ -157,7 +157,7 @@ export default function MessagesPage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Messages</h1>
             <p className="text-gray-500 text-sm mt-0.5">
-              Use <span className="font-mono bg-gray-100 px-1 rounded text-gray-700">@Name</span> to notify someone
+              Type <span className="font-mono bg-blue-50 border border-blue-200 text-blue-700 px-1.5 py-0.5 rounded text-xs font-semibold">@Name</span> <span className="text-gray-400">to notify someone</span>
             </p>
           </div>
           <div className="flex gap-2 flex-wrap">
