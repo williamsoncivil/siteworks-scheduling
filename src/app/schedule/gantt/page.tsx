@@ -648,40 +648,31 @@ export default function MasterGanttPage() {
                       );
                     })}
 
-                    {/* Dependency arrows — rendered AFTER bars so they appear on top */}
+                    {/* Dependency arrows — rendered AFTER bars, drawn inline (no marker refs) */}
                     {depArrows.length > 0 && (
                       <svg
                         className="absolute inset-0 pointer-events-none"
                         style={{ width: timelineWidth, height: totalHeight, overflow: "visible", zIndex: 15 }}
                       >
-                        <defs>
-                          <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-                            <polygon points="0 0, 8 4, 0 8" fill="#4f46e5" />
-                          </marker>
-                        </defs>
                         {depArrows.map((a, i) => {
-                          // Stub right 20px from predecessor end, jog to successor row, arrive at successor start
-                          const stub = 20;
+                          const stub = 14;
                           const ex = a.x1 + stub;
+                          // Elbow path — stop 6px before target so arrowhead tip lands on bar edge
+                          const ax = a.x2 - 6;
                           let d: string;
-                          if (a.x2 >= ex) {
-                            // Simple case: successor is to the right → straight elbow
-                            d = `M ${a.x1} ${a.y1} H ${ex} V ${a.y2} H ${a.x2}`;
+                          if (ax >= ex) {
+                            d = `M ${a.x1} ${a.y1} H ${ex} V ${a.y2} H ${ax}`;
                           } else {
-                            // Overlap case: route around by going down/up between rows
                             const midY = (a.y1 + a.y2) / 2;
-                            d = `M ${a.x1} ${a.y1} H ${ex} V ${midY} H ${a.x2 - stub} V ${a.y2} H ${a.x2}`;
+                            d = `M ${a.x1} ${a.y1} H ${ex} V ${midY} H ${a.x2 - stub} V ${a.y2} H ${ax}`;
                           }
+                          // Arrowhead triangle pointing right at (a.x2, a.y2)
+                          const ah = `${ax},${a.y2 - 4} ${a.x2},${a.y2} ${ax},${a.y2 + 4}`;
                           return (
-                            <path
-                              key={i}
-                              d={d}
-                              fill="none"
-                              stroke="#4f46e5"
-                              strokeWidth="1.5"
-                              opacity="0.55"
-                              markerEnd="url(#arrowhead)"
-                            />
+                            <g key={i}>
+                              <path d={d} fill="none" stroke="#475569" strokeWidth="1.5" opacity="0.7" />
+                              <polygon points={ah} fill="#475569" opacity="0.7" />
+                            </g>
                           );
                         })}
                       </svg>
