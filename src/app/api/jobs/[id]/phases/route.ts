@@ -35,6 +35,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const phases = await prisma.phase.findMany({
     where: { jobId: params.id },
     orderBy: { orderIndex: "asc" },
+    include: {
+      predecessorDeps: {
+        select: { predecessorId: true, type: true, lagDays: true },
+      },
+    },
   });
 
   return NextResponse.json(phases);

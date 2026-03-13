@@ -54,6 +54,12 @@ import {
   isSameDay,
 } from "date-fns";
 
+interface PhaseDep {
+  predecessorId: string;
+  type: string;
+  lagDays: number;
+}
+
 interface Phase {
   id: string;
   name: string;
@@ -63,6 +69,7 @@ interface Phase {
   endDate: string | null;
   dependsOnId: string | null;
   completion: number;
+  predecessorDeps?: PhaseDep[];
 }
 
 interface Worker {
@@ -234,31 +241,33 @@ export default function MasterGanttPage() {
   });
 
   // Dependency arrows
-  const getDependencyLines = () => {
-    const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
+  interface DepArrow { x1: number; y1: number; x2: number; y2: number; forward: boolean }
+  const getDependencyArrows = (): DepArrow[] => {
+    const arrows: DepArrow[] = [];
     rows.forEach((row, rowIdx) => {
       if (row.type !== "phase") return;
       const { phase } = row;
-      if (!phase.dependsOnId) return;
-      const parentRowIdx = rows.findIndex(
-        (r) => r.type === "phase" && r.phase.id === phase.dependsOnId
-      );
-      if (parentRowIdx < 0) return;
-      const parentRow = rows[parentRowIdx];
-      if (parentRow.type !== "phase") return;
-      const childBar = getBarStyle(phase);
-      const parentBar = getBarStyle(parentRow.phase);
-      if (!childBar || !parentBar) return;
-      const parentY = rowYPositions[parentRowIdx] + ROW_HEIGHT / 2;
-      const childY = rowYPositions[rowIdx] + ROW_HEIGHT / 2;
-      lines.push({
-        x1: parentBar.left + parentBar.width,
-        y1: parentY,
-        x2: childBar.left,
-        y2: childY,
+      const deps = phase.predecessorDeps ?? (phase.dependsOnId ? [{ predecessorId: phase.dependsOnId, type: "FINISH_TO_START", lagDays: 0 }] : []);
+      deps.forEach((dep) => {
+        const predRowIdx = rows.findIndex((r) => r.type === "phase" && r.phase.id === dep.predecessorId);
+        if (predRowIdx < 0) return;
+        const predRow = rows[predRowIdx];
+        if (predRow.type !== "phase") return;
+        const succBar = getBarStyle(phase);
+        const predBar = getBarStyle(predRow.phase);
+        if (!succBar || !predBar) return;
+        const predY = rowYPositions[predRowIdx] + ROW_HEIGHT / 2;
+        const succY = rowYPositions[rowIdx] + ROW_HEIGHT / 2;
+        arrows.push({
+          x1: predBar.left + predBar.width, // end of predecessor
+          y1: predY,
+          x2: succBar.left,                  // start of successor
+          y2: succY,
+          forward: rowIdx > predRowIdx,
+        });
       });
     });
-    return lines;
+    return arrows;
   };
 
   const handleBarClick = (e: React.MouseEvent, phase: Phase, job: JobWithPhases) => {
@@ -326,7 +335,7 @@ export default function MasterGanttPage() {
     );
   }
 
-  const depLines = getDependencyLines();
+  const depArrows = getDependencyArrows();
   const monthLabels = getMonthLabels();
 
   // Header heights for sticky top positioning
@@ -606,14 +615,22 @@ export default function MasterGanttPage() {
                     })}
 
                     {/* Dependency arrows */}
-                    {depLines.length > 0 && (
+                    {depArrows.length > 0 && (
                       <svg
                         className="absolute inset-0 pointer-events-none"
-                        style={{ width: timelineWidth, height: totalHeight }}
+                        style={{ width: timelineWidth, height: totalHeight, overflow: "visible" }}
                       >
-                        {depLines.map((line, i) => {
-                          const midX = line.x1 + 16;
-                          const path = `M ${line.x1} ${line.y1} H ${midX} V ${line.y2} H ${line.x2}`;
+                        <defs>
+                          <marker id="dep-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                            <path d="M0,0 L0,6 L6,3 z" fill="#6366f1" opacity="0.75" />
+                          </marker>
+                        </defs>
+                        {depArrows.map((a, i) => {
+                          // Elbow connector: right from pred end → jog down/up → left into succ start
+                          const elbowX = a.x1 + 12;
+                          const path = a.x2 > elbowX
+                            ? `M ${a.x1} ${a.y1} H ${elbowX} V ${a.y2} H ${a.x2}`
+                            : `M ${a.x1} ${a.y1} H ${elbowX} V ${(a.y1 + a.y2) / 2} H ${a.x2 - 12} V ${a.y2} H ${a.x2}`;
                           return (
                             <path
                               key={i}
@@ -621,19 +638,12 @@ export default function MasterGanttPage() {
                               fill="none"
                               stroke="#6366f1"
                               strokeWidth="1.5"
-                              strokeDasharray="4 2"
-                              opacity="0.6"
+                              strokeDasharray="5 3"
+                              opacity="0.65"
+                              markerEnd="url(#dep-arrow)"
                             />
                           );
                         })}
-                        {depLines.map((line, i) => (
-                          <polygon
-                            key={`arrow-${i}`}
-                            points={`${line.x2},${line.y2} ${line.x2 - 5},${line.y2 - 3} ${line.x2 - 5},${line.y2 + 3}`}
-                            fill="#6366f1"
-                            opacity="0.6"
-                          />
-                        ))}
                       </svg>
                     )}
 
