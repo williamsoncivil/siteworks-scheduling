@@ -182,6 +182,14 @@ export async function cascadePhaseUpdate(
           },
         });
 
+        // Sync schedule entries to the new phase start date
+        if (newSuccessorStart && startChanged) {
+          await prisma.scheduleEntry.updateMany({
+            where: { phaseId: dep.successorId },
+            data: { date: newSuccessorStart },
+          });
+        }
+
         cascadedPhases.push({
           id: updated.id,
           name: updated.name,

@@ -59,6 +59,17 @@ export async function PATCH(
     },
   });
 
+  // Sync schedule entries to new phase start date when it changed
+  if (startDate !== undefined && newStart) {
+    const startChanged = newStart.getTime() !== (existing.startDate?.getTime() ?? 0);
+    if (startChanged) {
+      await prisma.scheduleEntry.updateMany({
+        where: { phaseId: params.id },
+        data: { date: newStart },
+      });
+    }
+  }
+
   // Run cascade whenever dates are explicitly provided (even if already stored — the old move
   // endpoint may have already saved them, so we can't rely on a diff check here)
   let cascadedPhases: Awaited<ReturnType<typeof cascadePhaseUpdate>> = [];
