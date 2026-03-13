@@ -63,6 +63,7 @@ export default function SchedulePage() {
     startTime: string;
     endTime: string;
     notes: string;
+    additionalUserIds: Set<string>;
     saving: boolean;
     error: string;
   } | null>(null);
@@ -149,6 +150,7 @@ export default function SchedulePage() {
       startTime: entry.startTime,
       endTime: entry.endTime,
       notes: entry.notes ?? "",
+      additionalUserIds: new Set(),
       saving: false,
       error: "",
     });
@@ -169,15 +171,27 @@ export default function SchedulePage() {
         }),
       });
       if (!res.ok) throw new Error("Save failed");
+
+      // Create schedule entries for additional people
+      if (entryModal.additionalUserIds.size > 0) {
+        await Promise.all(Array.from(entryModal.additionalUserIds).map((userId) =>
+          fetch("/api/schedule", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jobId: entryModal.entry.job.id,
+              phaseId: entryModal.entry.phase?.id ?? null,
+              userId,
+              date: entryModal.date,
+              startTime: entryModal.startTime,
+              endTime: entryModal.endTime,
+            }),
+          })
+        ));
+      }
+
       setEntryModal(null);
-      // Refetch
-      const weekStr = format(weekStart, "yyyy-MM-dd");
-      const url = filterUserId
-        ? `/api/schedule?week=${weekStr}&userId=${filterUserId}`
-        : `/api/schedule?week=${weekStr}`;
-      const d = await fetch(url).then((r) => r.json());
-      setEntries(d.entries ?? d);
-      setUnassignedPhases(d.unassignedPhases ?? []);
+      await refetch();
     } catch {
       setEntryModal((m) => m ? { ...m, saving: false, error: "Failed to save — try again" } : null);
     }
@@ -617,6 +631,29 @@ export default function SchedulePage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
               </div>
             </div>
+              {users.filter((u) => u.id !== entryModal.entry.user.id).length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Add More People <span className="text-gray-400">(optional)</span></label>
+                  <div className="space-y-1 max-h-28 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                    {users.filter((u) => u.id !== entryModal.entry.user.id).map((u) => (
+                      <label key={u.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                        <input
+                          type="checkbox"
+                          checked={entryModal.additionalUserIds.has(u.id)}
+                          onChange={() => setEntryModal((m) => {
+                            if (!m) return null;
+                            const next = new Set(m.additionalUserIds);
+                            if (next.has(u.id)) next.delete(u.id); else next.add(u.id);
+                            return { ...m, additionalUserIds: next };
+                          })}
+                          className="rounded border-gray-300 text-blue-600"
+                        />
+                        <span className="text-xs text-gray-700">{u.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
             {entryModal.error && <p className="text-xs text-red-500 mb-3">{entryModal.error}</p>}
             <div className="flex gap-2">
               <button onClick={saveEntryModal} disabled={entryModal.saving}
