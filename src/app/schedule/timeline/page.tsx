@@ -17,13 +17,37 @@ import {
 } from "date-fns";
 
 const DURATION_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 10, 14, 21, 28, 30, 45, 60, 90];
+
+/** Strip time component so UTC dates don't shift by a day in local timezone */
+const parseDate = (dateStr: string) => parseISO(dateStr.split("T")[0]);
+
+/** Add N business days (skip weekends), returns yyyy-MM-dd */
 function endFromDuration(start: string, days: number): string {
-  try { return format(addDays(parseISO(start), days - 1), "yyyy-MM-dd"); }
-  catch { return ""; }
+  try {
+    let d = parseDate(start);
+    while (d.getDay() === 0 || d.getDay() === 6) d = addDays(d, 1);
+    let remaining = days - 1;
+    while (remaining > 0) {
+      d = addDays(d, 1);
+      if (d.getDay() !== 0 && d.getDay() !== 6) remaining--;
+    }
+    return format(d, "yyyy-MM-dd");
+  } catch { return ""; }
 }
+
+/** Count business days between two date strings (inclusive) */
 function durationFromDates(start: string, end: string): number | null {
-  try { const d = differenceInDays(parseISO(end), parseISO(start)) + 1; return d > 0 ? d : null; }
-  catch { return null; }
+  try {
+    const endDate = parseDate(end);
+    let d = parseDate(start);
+    if (endDate < d) return null;
+    let count = 0;
+    while (d <= endDate) {
+      if (d.getDay() !== 0 && d.getDay() !== 6) count++;
+      d = addDays(d, 1);
+    }
+    return count > 0 ? count : null;
+  } catch { return null; }
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -156,8 +180,8 @@ export default function TimelinePage() {
     const sd = overrideDates?.startDate ?? phase.startDate;
     const ed = overrideDates?.endDate ?? phase.endDate;
     if (!sd || !ed) return null;
-    const start = parseISO(sd);
-    const end = parseISO(ed);
+    const start = parseDate(sd);
+    const end = parseDate(ed);
     const leftDays = differenceInDays(start, viewStart);
     const widthDays = Math.max(differenceInDays(end, start) + 1, 1);
     const left = leftDays * dayWidth;
@@ -536,16 +560,16 @@ export default function TimelinePage() {
             <div className="text-xs text-gray-700 space-y-1 mb-2">
               <div className="flex justify-between">
                 <span className="text-gray-500">Start</span>
-                <span className="font-medium">{format(parseISO(tooltip.phase.startDate), "MMM d, yyyy")}</span>
+                <span className="font-medium">{format(parseDate(tooltip.phase.startDate), "MMM d, yyyy")}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">End</span>
-                <span className="font-medium">{format(parseISO(tooltip.phase.endDate), "MMM d, yyyy")}</span>
+                <span className="font-medium">{format(parseDate(tooltip.phase.endDate), "MMM d, yyyy")}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-500">Duration</span>
                 <span className="font-medium">
-                  {differenceInDays(parseISO(tooltip.phase.endDate), parseISO(tooltip.phase.startDate)) + 1}d
+                  {differenceInDays(parseDate(tooltip.phase.endDate), parseDate(tooltip.phase.startDate)) + 1}d
                 </span>
               </div>
             </div>

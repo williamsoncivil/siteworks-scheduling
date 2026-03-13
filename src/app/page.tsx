@@ -50,13 +50,13 @@ export default function DashboardPage() {
       fetch(`/api/schedule?week=${weekStart}`).then((r) => r.json()),
     ]).then(([todayData, weekData, allWeekData]) => {
       setTodayEntries(todayData.entries ?? todayData);
-      setWeekEntries((weekData.entries ?? weekData).filter((e: ScheduleEntry) => !isToday(parseISO(e.date))));
+      setWeekEntries((weekData.entries ?? weekData).filter((e: ScheduleEntry) => !isToday(parseISO(e.date.split("T")[0]))));
       setAllWeekEntries(allWeekData.entries ?? allWeekData);
 
       // Detect double-bookings across all users this week
       const dateUserMap: Record<string, Record<string, ScheduleEntry[]>> = {};
       for (const entry of allWeekData) {
-        const dateKey = format(parseISO(entry.date), "yyyy-MM-dd");
+        const dateKey = format(parseISO(entry.date.split("T")[0]), "yyyy-MM-dd");
         if (!dateUserMap[dateKey]) dateUserMap[dateKey] = {};
         if (!dateUserMap[dateKey][entry.user.id]) dateUserMap[dateKey][entry.user.id] = [];
         dateUserMap[dateKey][entry.user.id].push(entry);
@@ -102,7 +102,7 @@ export default function DashboardPage() {
               {conflicts.map((conflict, i) => (
                 <div key={i} className="text-sm text-yellow-700">
                   <span className="font-medium">{conflict.entries[0].user.name}</span> is double-booked on{" "}
-                  <span className="font-medium">{format(parseISO(conflict.date), "EEE, MMM d")}</span>:{" "}
+                  <span className="font-medium">{format(parseISO(conflict.date.split("T")[0]), "EEE, MMM d")}</span>:{" "}
                   {conflict.entries.map((e) => e.job.name).join(" & ")}
                 </div>
               ))}
@@ -155,7 +155,7 @@ export default function DashboardPage() {
                       {entry.phase && <p className="text-sm text-gray-500">{entry.phase.name}</p>}
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-sm font-medium text-gray-700">{format(parseISO(entry.date), "EEE, MMM d")}</p>
+                      <p className="text-sm font-medium text-gray-700">{format(parseISO(entry.date.split("T")[0]), "EEE, MMM d")}</p>
                       <p className="text-xs text-gray-400">{entry.startTime} – {entry.endTime}</p>
                     </div>
                   </div>

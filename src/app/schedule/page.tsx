@@ -98,9 +98,12 @@ export default function SchedulePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentDate, filterUserId, viewMode]);
 
+  /** Strip UTC time offset so dates don't shift by a day in local timezone */
+  const parseDate = (dateStr: string) => parseISO(dateStr.split("T")[0]);
+
   const getEntriesForDay = (day: Date, entryList?: ScheduleEntry[]) => {
     const list = entryList ?? entries;
-    return list.filter((e) => isSameDay(parseISO(e.date), day));
+    return list.filter((e) => isSameDay(parseDate(e.date), day));
   };
 
   const prevPeriod = () => setCurrentDate(viewMode === "month" ? subMonths(currentDate, 1) : subWeeks(currentDate, 1));
@@ -188,10 +191,10 @@ export default function SchedulePage() {
   };
 
   const getEntriesForJobAndDay = (jobId: string, day: Date) =>
-    entries.filter((e) => e.job.id === jobId && isSameDay(parseISO(e.date), day));
+    entries.filter((e) => e.job.id === jobId && isSameDay(parseDate(e.date), day));
 
   const getUnassignedForDay = (day: Date) =>
-    unassignedPhases.filter((p) => isSameDay(parseISO(p.startDate), day));
+    unassignedPhases.filter((p) => isSameDay(parseDate(p.startDate), day));
 
   const renderUnassignedPhase = (phase: UnassignedPhase) => (
     <div
