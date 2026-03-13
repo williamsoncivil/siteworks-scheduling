@@ -71,6 +71,7 @@ export default function SchedulePage() {
     phase: UnassignedPhase;
     startDate: string;
     endDate: string;
+    assignedUserIds: Set<string>;
     saving: boolean;
     error: string;
   } | null>(null);
@@ -188,6 +189,7 @@ export default function SchedulePage() {
       phase,
       startDate: phase.startDate.split("T")[0],
       endDate: phase.endDate ? phase.endDate.split("T")[0] : "",
+      assignedUserIds: new Set(),
       saving: false,
       error: "",
     });
@@ -203,6 +205,25 @@ export default function SchedulePage() {
         body: JSON.stringify({ startDate: phaseModal.startDate, endDate: phaseModal.endDate || null }),
       });
       if (!res.ok) throw new Error("Save failed");
+
+      // Assign selected people
+      if (phaseModal.assignedUserIds.size > 0 && phaseModal.startDate) {
+        await Promise.all(Array.from(phaseModal.assignedUserIds).map((userId) =>
+          fetch("/api/schedule", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jobId: phaseModal.phase.job.id,
+              phaseId: phaseModal.phase.id,
+              userId,
+              date: phaseModal.startDate,
+              startTime: "07:00",
+              endTime: "15:30",
+            }),
+          })
+        ));
+      }
+
       setPhaseModal(null);
       await refetch();
     } catch {
@@ -632,6 +653,29 @@ export default function SchedulePage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
             </div>
+            {users.length > 0 && (
+              <div className="mb-3">
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">Assign People <span className="text-gray-400">(optional)</span></label>
+                <div className="space-y-1 max-h-32 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                  {users.map((u) => (
+                    <label key={u.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                      <input
+                        type="checkbox"
+                        checked={phaseModal.assignedUserIds.has(u.id)}
+                        onChange={() => setPhaseModal((m) => {
+                          if (!m) return null;
+                          const next = new Set(m.assignedUserIds);
+                          if (next.has(u.id)) next.delete(u.id); else next.add(u.id);
+                          return { ...m, assignedUserIds: next };
+                        })}
+                        className="rounded border-gray-300 text-blue-600"
+                      />
+                      <span className="text-xs text-gray-700">{u.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <p className="text-xs text-gray-400 mb-3">Saving will update the Gantt, Timeline, and Jobs page — and cascade to dependent phases.</p>
             {phaseModal.error && <p className="text-xs text-red-500 mb-3">{phaseModal.error}</p>}
             <div className="flex gap-2">

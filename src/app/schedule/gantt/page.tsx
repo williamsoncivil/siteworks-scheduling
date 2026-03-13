@@ -63,6 +63,11 @@ interface Phase {
   dependsOnId: string | null;
 }
 
+interface Worker {
+  id: string;
+  name: string;
+}
+
 interface JobWithPhases {
   id: string;
   name: string;
@@ -95,12 +100,14 @@ function getPhaseColor(phase: Phase): string {
 
 export default function MasterGanttPage() {
   const [jobs, setJobs] = useState<JobWithPhases[]>([]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
   const [loading, setLoading] = useState(true);
   const [popover, setPopover] = useState<{ phase: Phase; jobName: string; x: number; y: number } | null>(null);
   const [optimisticDates, setOptimisticDates] = useState<Record<string, { startDate: string; endDate: string }>>({});
   const [editModal, setEditModal] = useState<{
-    phase: Phase; jobName: string;
+    phase: Phase; jobId: string; jobName: string;
     startDate: string; endDate: string;
+    assignedUserIds: Set<string>;
     saving: boolean; error: string;
   } | null>(null);
 
@@ -134,6 +141,7 @@ export default function MasterGanttPage() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { fetch("/api/people").then((r) => r.json()).then(setWorkers); }, []);
 
   // Scroll to today (centered) once data is loaded
   useEffect(() => {
@@ -242,15 +250,17 @@ export default function MasterGanttPage() {
     return lines;
   };
 
-  const handleBarClick = (e: React.MouseEvent, phase: Phase, jobName: string) => {
+  const handleBarClick = (e: React.MouseEvent, phase: Phase, job: JobWithPhases) => {
     e.stopPropagation();
     setPopover(null);
     const eff = optimisticDates[phase.id];
     setEditModal({
       phase,
-      jobName,
+      jobId: job.id,
+      jobName: job.name,
       startDate: eff?.startDate ?? phase.startDate ?? "",
       endDate: eff?.endDate ?? phase.endDate ?? "",
+      assignedUserIds: new Set(),
       saving: false,
       error: "",
     });
@@ -266,6 +276,25 @@ export default function MasterGanttPage() {
         body: JSON.stringify({ startDate: editModal.startDate, endDate: editModal.endDate }),
       });
       if (!res.ok) throw new Error("Save failed");
+
+      // Assign selected people
+      if (editModal.assignedUserIds.size > 0 && editModal.startDate) {
+        await Promise.all(Array.from(editModal.assignedUserIds).map((userId) =>
+          fetch("/api/schedule", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              jobId: editModal.jobId,
+              phaseId: editModal.phase.id,
+              userId,
+              date: editModal.startDate,
+              startTime: "07:00",
+              endTime: "15:30",
+            }),
+          })
+        ));
+      }
+
       setOptimisticDates((prev) => ({
         ...prev,
         [editModal.phase.id]: { startDate: editModal.startDate, endDate: editModal.endDate },
@@ -596,7 +625,7 @@ export default function MasterGanttPage() {
                       return (
                         <div
                           key={phase.id}
-                          onClick={(e) => handleBarClick(e, phase, job.name)}
+                          onClick={(e) => handleBarClick(e, phase, job)}
                           onMouseEnter={(e) => {
                             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
                             setPopover({ phase, jobName: job.name, x: rect.left, y: rect.bottom + 8 });
@@ -687,6 +716,29 @@ export default function MasterGanttPage() {
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
             </div>
+              {workers.length > 0 && (
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Assign People <span className="text-gray-400">(optional)</span></label>
+                  <div className="space-y-1 max-h-32 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                    {workers.map((w) => (
+                      <label key={w.id} className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 rounded px-1 py-0.5">
+                        <input
+                          type="checkbox"
+                          checked={editModal.assignedUserIds.has(w.id)}
+                          onChange={() => setEditModal((m) => {
+                            if (!m) return null;
+                            const next = new Set(m.assignedUserIds);
+                            if (next.has(w.id)) next.delete(w.id); else next.add(w.id);
+                            return { ...m, assignedUserIds: next };
+                          })}
+                          className="rounded border-gray-300 text-blue-600"
+                        />
+                        <span className="text-xs text-gray-700">{w.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
             {editModal.error && <p className="text-xs text-red-500 mb-3">{editModal.error}</p>}
             <div className="flex gap-2">
               <button
