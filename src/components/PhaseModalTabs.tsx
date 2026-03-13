@@ -20,13 +20,24 @@ interface Doc {
   createdAt: string;
 }
 
+interface ScheduleItem {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  user: { id: string; name: string };
+}
+
 interface PhaseModalTabsProps {
   phaseId: string;
   jobId: string;
 }
 
 export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
-  const [tab, setTab] = useState<"notes" | "files">("notes");
+  const [tab, setTab] = useState<"team" | "notes" | "files">("team");
+
+  // Team / schedule items
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[] | null>(null);
 
   // Messages
   const [messages, setMessages] = useState<Message[] | null>(null);
@@ -38,12 +49,22 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const fetchTeam = async () => {
+    if (scheduleItems !== null) return;
+    const res = await fetch(`/api/schedule?jobId=${jobId}&phaseId=${phaseId}`);
+    if (res.ok) {
+      const data = await res.json();
+      const entries: ScheduleItem[] = data.entries ?? (Array.isArray(data) ? data : []);
+      setScheduleItems(entries);
+    }
+  };
+
   const fetchMessages = async () => {
     if (messages !== null) return;
     const res = await fetch(`/api/messages?jobId=${jobId}&phaseId=${phaseId}`);
     if (res.ok) {
       const data = await res.json();
-      setMessages(data.messages ?? data);
+      setMessages(data.messages ?? (Array.isArray(data) ? data : []));
     }
   };
 
@@ -56,14 +77,15 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
     }
   };
 
-  const switchTab = (t: "notes" | "files") => {
+  const switchTab = (t: "team" | "notes" | "files") => {
     setTab(t);
+    if (t === "team") fetchTeam();
     if (t === "notes") fetchMessages();
     if (t === "files") fetchDocs();
   };
 
-  // Load notes on first render
-  useEffect(() => { fetchMessages(); }, []);
+  // Load team on first render
+  useEffect(() => { fetchTeam(); }, []);
 
   const sendMessage = async () => {
     const content = msgInput.trim();
@@ -75,9 +97,8 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
       body: JSON.stringify({ content, jobId, phaseId }),
     });
     setMsgInput("");
-    // Refresh
     const res = await fetch(`/api/messages?jobId=${jobId}&phaseId=${phaseId}`);
-    if (res.ok) { const data = await res.json(); setMessages(data.messages ?? data); }
+    if (res.ok) { const data = await res.json(); setMessages(data.messages ?? (Array.isArray(data) ? data : [])); }
     setSending(false);
   };
 
@@ -99,9 +120,10 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
           body: JSON.stringify({ name: file.name, fileUrl: blob.url, fileType: file.type || "application/octet-stream", fileSize: file.size, jobId, phaseId }),
         });
       }));
-      // Refresh docs
-      const res2 = await fetch(`/api/documents?jobId=${jobId}&phaseId=${phaseId}`);
-      if (res2.ok) { const data2 = await res2.json(); setDocs(Array.isArray(data2) ? data2 : (data2.documents ?? [])); }
+      // Force refresh
+      setDocs(null);
+      const res = await fetch(`/api/documents?jobId=${jobId}&phaseId=${phaseId}`);
+      if (res.ok) { const data = await res.json(); setDocs(Array.isArray(data) ? data : (data.documents ?? [])); }
     } catch (err) {
       alert("Upload failed: " + String(err));
     }
@@ -111,22 +133,47 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
 
   const isImage = (type: string) => type.startsWith("image/");
 
+  const formatDate = (d: string) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
   return (
     <div className="mt-3 border-t border-gray-100 pt-3">
       {/* Tab bar */}
       <div className="flex gap-1 mb-3">
-        {(["notes", "files"] as const).map((t) => (
+        {(["team", "notes", "files"] as const).map((t) => (
           <button key={t} onClick={() => switchTab(t)}
             className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${tab === t ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-            {t === "notes" ? "💬 Notes" : "📎 Files"}
+            {t === "team" ? "👷 Team" : t === "notes" ? "💬 Notes" : "📎 Files"}
           </button>
         ))}
       </div>
 
+      {/* Team tab */}
+      {tab === "team" && (
+        <div className="max-h-40 overflow-y-auto space-y-1">
+          {scheduleItems === null ? (
+            <p className="text-xs text-gray-400">Loading…</p>
+          ) : scheduleItems.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">No one assigned yet</p>
+          ) : scheduleItems.map((item) => (
+            <div key={item.id} className="flex items-center gap-2 py-1 border-b border-gray-50 last:border-0">
+              <div className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-xs flex items-center justify-center font-semibold shrink-0">
+                {item.user.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <span className="text-xs font-medium text-gray-700">{item.user.name}</span>
+              </div>
+              <div className="text-xs text-gray-400 shrink-0">
+                {formatDate(item.date)} · {item.startTime}–{item.endTime}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Notes tab */}
       {tab === "notes" && (
         <div>
-          <div className="max-h-36 overflow-y-auto space-y-2 mb-2">
+          <div className="max-h-40 overflow-y-auto space-y-2 mb-2">
             {messages === null ? (
               <p className="text-xs text-gray-400">Loading…</p>
             ) : messages.length === 0 ? (
@@ -138,7 +185,7 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
                 </div>
                 <div>
                   <span className="text-xs font-medium text-gray-700">{msg.author.name}</span>
-                  <span className="text-xs text-gray-400 ml-1">{new Date(msg.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                  <span className="text-xs text-gray-400 ml-1">{formatDate(msg.createdAt)}</span>
                   <p className="text-xs text-gray-600 mt-0.5">{msg.content}</p>
                 </div>
               </div>
@@ -157,10 +204,11 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
         </div>
       )}
 
-      {/* Files tab */}
+      {/* Files tab — list scrolls, upload button pinned at bottom */}
       {tab === "files" && (
-        <div>
-          <div className="max-h-36 overflow-y-auto space-y-2 mb-2">
+        <div className="flex flex-col gap-2">
+          {/* Scrollable file list */}
+          <div className="max-h-40 overflow-y-auto space-y-2">
             {docs === null ? (
               <p className="text-xs text-gray-400">Loading…</p>
             ) : docs.length === 0 ? (
@@ -168,21 +216,22 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
             ) : docs.map((doc) => (
               <div key={doc.id} className="flex items-center gap-2">
                 {isImage(doc.fileType) ? (
-                  <img src={doc.fileUrl} alt={doc.name} className="w-8 h-8 object-cover rounded border border-gray-200 shrink-0" />
+                  <img src={doc.fileUrl} alt={doc.name} className="w-10 h-10 object-cover rounded border border-gray-200 shrink-0" />
                 ) : (
-                  <div className="w-8 h-8 bg-red-50 border border-red-200 rounded flex items-center justify-center shrink-0 text-xs font-bold text-red-600">PDF</div>
+                  <div className="w-10 h-10 bg-red-50 border border-red-200 rounded flex items-center justify-center shrink-0 text-[10px] font-bold text-red-600">PDF</div>
                 )}
                 <div className="flex-1 min-w-0">
                   <a href={doc.fileUrl} target="_blank" rel="noreferrer"
                     className="text-xs text-blue-600 hover:underline truncate block font-medium">{doc.name}</a>
-                  <p className="text-xs text-gray-400">{doc.uploadedBy.name} · {new Date(doc.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</p>
+                  <p className="text-xs text-gray-400">{doc.uploadedBy.name} · {formatDate(doc.createdAt)}</p>
                 </div>
               </div>
             ))}
           </div>
+          {/* Upload button always visible at bottom */}
           <button onClick={() => fileRef.current?.click()} disabled={uploading}
-            className="w-full text-xs border-2 border-dashed border-gray-300 rounded-lg py-2 text-gray-500 hover:border-blue-400 hover:text-blue-600 transition-colors disabled:opacity-40">
-            {uploading ? "Uploading…" : "📎 Tap to attach photo or file"}
+            className="w-full text-xs border-2 border-dashed border-gray-300 rounded-lg py-2.5 text-gray-500 hover:border-blue-400 hover:text-blue-600 transition-colors disabled:opacity-40 shrink-0">
+            {uploading ? "Uploading…" : "📎 Attach photos or files (multiple OK)"}
           </button>
           <input ref={fileRef} type="file" accept="image/*,.pdf,video/*" multiple className="hidden" onChange={handleFileChange} />
         </div>

@@ -23,6 +23,8 @@ export async function GET(req: NextRequest) {
     where.job = { status: "ACTIVE" };
   }
   if (userId) where.userId = userId;
+  const phaseIdFilter = searchParams.get("phaseId");
+  if (phaseIdFilter) where.phaseId = phaseIdFilter;
 
   let rangeStart: Date | null = null;
   let rangeEnd: Date | null = null;

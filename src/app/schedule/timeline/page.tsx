@@ -391,35 +391,65 @@ export default function TimelinePage() {
               </div>
 
               {/* ── Scrollable timeline area ───────────────────────────────────── */}
-              <div ref={scrollRef} className="flex-1 overflow-x-auto">
+              <div ref={scrollRef} className="flex-1 overflow-x-auto" style={{ cursor: "grab" }}
+                onMouseDown={(e) => {
+                  if ((e.target as HTMLElement).closest("button,select,input,a")) return;
+                  const el = scrollRef.current;
+                  if (!el) return;
+                  e.preventDefault();
+                  const startX = e.pageX + el.scrollLeft;
+                  el.style.cursor = "grabbing";
+                  const onMove = (me: MouseEvent) => { el.scrollLeft = startX - me.pageX; };
+                  const onUp = () => { el.style.cursor = "grab"; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+                  window.addEventListener("mousemove", onMove);
+                  window.addEventListener("mouseup", onUp);
+                }}
+              >
                 <div style={{ width: Math.max(timelineWidth, 100), minWidth: "100%" }}>
-                  {/* Day header row */}
-                  <div className="relative h-10 border-b border-gray-100 flex" style={{ width: Math.max(timelineWidth, 100) }}>
-                    {days.map((day, i) => {
-                      const weekend = isWeekend(day);
-                      const today = isSameDay(day, new Date());
-                      return (
-                        <div
-                          key={i}
-                          className={`flex-none border-r border-gray-50 flex flex-col items-center justify-center ${weekend ? "bg-gray-50" : ""} ${today ? "bg-blue-50" : ""}`}
-                          style={{ width: dayWidth }}
-                        >
-                          {dayWidth >= 20 && (
-                            <>
-                              {dayWidth >= 28 && (
-                                <span className={`text-[10px] ${today ? "text-blue-600" : weekend ? "text-gray-300" : "text-gray-400"}`}>
-                                  {format(day, "EEE").substring(0, 1)}
-                                </span>
-                              )}
-                              <span className={`text-[10px] font-semibold ${today ? "text-blue-600" : weekend ? "text-gray-400" : "text-gray-600"}`}>
-                                {format(day, "d")}
+                  {/* Day / Month header row */}
+                  {dayWidth >= 20 ? (
+                    <div className="relative h-10 border-b border-gray-100 flex" style={{ width: Math.max(timelineWidth, 100) }}>
+                      {days.map((day, i) => {
+                        const weekend = isWeekend(day);
+                        const today = isSameDay(day, new Date());
+                        return (
+                          <div key={i}
+                            className={`flex-none border-r border-gray-50 flex flex-col items-center justify-center ${weekend ? "bg-gray-50" : ""} ${today ? "bg-blue-50" : ""}`}
+                            style={{ width: dayWidth }}>
+                            {dayWidth >= 28 && (
+                              <span className={`text-[10px] ${today ? "text-blue-600" : weekend ? "text-gray-300" : "text-gray-400"}`}>
+                                {format(day, "EEE").substring(0, 1)}
                               </span>
-                            </>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                            )}
+                            <span className={`text-[10px] font-semibold ${today ? "text-blue-600" : weekend ? "text-gray-400" : "text-gray-600"}`}>
+                              {format(day, "d")}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    // Condensed month header for long views
+                    <div className="relative h-8 border-b border-gray-100 flex" style={{ width: Math.max(timelineWidth, 100) }}>
+                      {(() => {
+                        // Group days by month
+                        const monthGroups: { label: string; startIdx: number; count: number }[] = [];
+                        days.forEach((day, i) => {
+                          const label = format(day, "MMM yyyy");
+                          const last = monthGroups[monthGroups.length - 1];
+                          if (last && last.label === label) { last.count++; }
+                          else monthGroups.push({ label, startIdx: i, count: 1 });
+                        });
+                        return monthGroups.map((grp) => (
+                          <div key={grp.startIdx}
+                            className="absolute flex items-center justify-center border-r border-gray-200 bg-gray-50"
+                            style={{ left: grp.startIdx * dayWidth, width: grp.count * dayWidth, height: "100%" }}>
+                            <span className="text-[10px] font-semibold text-gray-600 px-1 truncate">{grp.label}</span>
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  )}
 
                   {/* Grid body */}
                   <div

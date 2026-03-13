@@ -405,7 +405,20 @@ export default function MasterGanttPage() {
             <div
               ref={scrollRef}
               className="overflow-auto"
-              style={{ maxHeight: "calc(100vh - 260px)", position: "relative" }}
+              style={{ maxHeight: "calc(100vh - 260px)", position: "relative", cursor: "grab" }}
+              onMouseDown={(e) => {
+                if ((e.target as HTMLElement).closest("button,select,input,a")) return;
+                const el = scrollRef.current;
+                if (!el) return;
+                e.preventDefault();
+                const startX = e.pageX + el.scrollLeft;
+                const startY = e.pageY + el.scrollTop;
+                el.style.cursor = "grabbing";
+                const onMove = (me: MouseEvent) => { el.scrollLeft = startX - me.pageX; el.scrollTop = startY - me.pageY; };
+                const onUp = () => { el.style.cursor = "grab"; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
+              }}
             >
               {/* Inner wrapper: explicit full width so sticky left works */}
               <div style={{ width: SIDEBAR_WIDTH + timelineWidth, minWidth: SIDEBAR_WIDTH + timelineWidth }}>
