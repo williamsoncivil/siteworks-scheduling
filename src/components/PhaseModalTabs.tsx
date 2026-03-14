@@ -51,6 +51,7 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
 
   // Lightbox
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const touchStartX = useRef<number | null>(null);
 
   const fetchTeam = async () => {
     if (scheduleItems !== null) return;
@@ -252,6 +253,18 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
               <div
                 className="fixed inset-0 z-[9999] bg-black/90 flex items-center justify-center"
                 onClick={() => setLightboxIndex(null)}
+                onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+                onTouchEnd={(e) => {
+                  if (touchStartX.current === null) return;
+                  const diff = touchStartX.current - e.changedTouches[0].clientX;
+                  if (Math.abs(diff) > 50) {
+                    setLightboxIndex(diff > 0
+                      ? (lightboxIndex + 1) % images.length
+                      : (lightboxIndex - 1 + images.length) % images.length
+                    );
+                  }
+                  touchStartX.current = null;
+                }}
               >
                 {/* Close */}
                 <button
