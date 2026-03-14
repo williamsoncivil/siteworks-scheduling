@@ -52,6 +52,7 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
   // Lightbox
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const touchStartX = useRef<number | null>(null);
+  const lightboxRef = useRef<HTMLDivElement>(null);
 
   const fetchTeam = async () => {
     if (scheduleItems !== null) return;
@@ -90,6 +91,30 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
 
   // Load team on first render
   useEffect(() => { fetchTeam(); }, []);
+
+  // Native touch events for lightbox swipe (iOS PWA fix)
+  useEffect(() => {
+    const el = lightboxRef.current;
+    if (!el || lightboxIndex === null) return;
+    const images = (docs ?? []).filter(d => d.fileType.startsWith("image/"));
+    let startX = 0;
+    const onStart = (e: TouchEvent) => { startX = e.touches[0].clientX; e.preventDefault(); };
+    const onEnd = (e: TouchEvent) => {
+      const diff = startX - e.changedTouches[0].clientX;
+      if (Math.abs(diff) > 40) {
+        setLightboxIndex(diff > 0
+          ? (lightboxIndex + 1) % images.length
+          : (lightboxIndex - 1 + images.length) % images.length
+        );
+      }
+    };
+    el.addEventListener("touchstart", onStart, { passive: false });
+    el.addEventListener("touchend", onEnd, { passive: false });
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchend", onEnd);
+    };
+  }, [lightboxIndex, docs]);
 
   const sendMessage = async () => {
     const content = msgInput.trim();
@@ -251,25 +276,9 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
             {/* Lightbox */}
             {lightboxIndex !== null && images.length > 0 && (
               <div
+                ref={lightboxRef}
                 className="fixed inset-0 z-[9999] bg-black/90 flex items-center justify-center"
-                style={{ touchAction: "none" }}
                 onClick={() => setLightboxIndex(null)}
-                onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
-                onTouchMove={(e) => e.preventDefault()}
-                onTouchEnd={(e) => {
-                  if (touchStartX.current === null) return;
-                  const diff = touchStartX.current - e.changedTouches[0].clientX;
-                  if (Math.abs(diff) > 40) {
-                    setLightboxIndex(diff > 0
-                      ? (lightboxIndex + 1) % images.length
-                      : (lightboxIndex - 1 + images.length) % images.length
-                    );
-                  } else {
-                    // Short tap = close
-                    setLightboxIndex(null);
-                  }
-                  touchStartX.current = null;
-                }}
               >
                 {/* Close */}
                 <button
