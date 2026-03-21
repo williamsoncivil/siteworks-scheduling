@@ -7,6 +7,7 @@ import OpenAI from "openai";
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 type HistoryMessage = { role: "user" | "assistant"; content: string };
+type PendingFile = { url: string; name: string; type: string };
 
 async function buildScheduleContext() {
   const today = new Date();
@@ -89,9 +90,105 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const message: string = body.message ?? "";
   const history: HistoryMessage[] = body.history ?? [];
+  const pendingFile: PendingFile | null = body.pendingFile ?? null;
 
-  if (!message.trim()) {
+  if (!message.trim() && !pendingFile) {
     return NextResponse.json({ error: "Message required" }, { status: 400 });
+  }
+
+  // Handle file upload identification
+  if (pendingFile) {
+    const ctx = await buildScheduleContext();
+    const { activeJobs } = ctx;
+
+    const jobPhaseList = activeJobs
+      .flatMap((j) =>
+        j.phases.map((p) => ({
+          jobId: j.id,
+          jobName: j.name,
+          phaseId: p.id,
+          phaseName: p.name,
+        }))
+      )
+      .slice(0, 80);
+
+    const caption = message.trim();
+
+    const identifyCompletion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a construction document filing assistant. Given a file caption and a list of active jobs/phases, identify which job and phase the file belongs to.
+
+Active jobs and phases (JSON):
+${JSON.stringify(jobPhaseList, null, 2)}
+
+Return a JSON object:
+{
+  "jobId": "<id or null>",
+  "jobName": "<name or null>",
+  "phaseId": "<id or null>",
+  "phaseName": "<name or null>",
+  "confidence": "high" | "medium" | "low"
+}
+
+If there is no caption or you cannot determine the job, set all fields to null and confidence to "low".`,
+        },
+        {
+          role: "user",
+          content: caption
+            ? `File name: ${pendingFile.name}\nCaption: ${caption}`
+            : `File name: ${pendingFile.name}\n(No caption provided)`,
+        },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    let identified: {
+      jobId: string | null;
+      jobName: string | null;
+      phaseId: string | null;
+      phaseName: string | null;
+      confidence: string;
+    } = { jobId: null, jobName: null, phaseId: null, phaseName: null, confidence: "low" };
+
+    try {
+      identified = JSON.parse(identifyCompletion.choices[0].message.content ?? "{}");
+    } catch {
+      // leave as low confidence
+    }
+
+    if (
+      (identified.confidence === "high" || identified.confidence === "medium") &&
+      identified.jobId
+    ) {
+      return NextResponse.json({
+        reply: `Got it! Save this ${pendingFile.type.startsWith("image/") ? "photo" : "file"} to:\n📁 Job: ${identified.jobName}\n📋 Phase: ${identified.phaseName ?? "No specific phase"}\n\nReply "yes" to confirm or "no" to cancel.`,
+        confirmUpload: {
+          url: pendingFile.url,
+          name: pendingFile.name,
+          type: pendingFile.type,
+          jobId: identified.jobId,
+          jobName: identified.jobName,
+          phaseId: identified.phaseId,
+          phaseName: identified.phaseName,
+        },
+      });
+    } else {
+      return NextResponse.json({
+        reply: `I received your ${pendingFile.type.startsWith("image/") ? "photo" : "file"} but couldn't tell which job/phase it belongs to. Which job and phase should I file it under?`,
+        confirmUpload: {
+          url: pendingFile.url,
+          name: pendingFile.name,
+          type: pendingFile.type,
+          jobId: null,
+          jobName: null,
+          phaseId: null,
+          phaseName: null,
+        },
+      });
+    }
   }
 
   // Classify message

@@ -2,16 +2,27 @@
 
 import { useState, useRef, useEffect } from "react";
 
+type ConfirmUpload = {
+  url: string;
+  name: string;
+  type: string;
+  jobId: string | null;
+  jobName: string | null;
+  phaseId: string | null;
+  phaseName: string | null;
+};
+
 type Message = {
   role: "user" | "assistant";
   content: string;
   timestamp: Date;
+  filePreview?: { url: string; name: string; isImage: boolean };
 };
 
 const WELCOME: Message = {
   role: "assistant",
   content:
-    "Hi! Ask me anything about your schedule — active jobs, phases, who's working, upcoming deadlines, or send a progress update.",
+    "Hi! Ask me anything about your schedule — active jobs, phases, who's working, upcoming deadlines, or send a progress update. You can also attach a photo or file 📎",
   timestamp: new Date(),
 };
 
@@ -20,8 +31,11 @@ export default function AIChatWidget() {
   const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pendingFile, setPendingFile] = useState<{ url: string; name: string; type: string } | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmUpload | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -33,13 +47,89 @@ export default function AIChatWidget() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/ai/upload-temp", { method: "POST", body: formData });
+      const data = await res.json();
+      if (data.url) {
+        setPendingFile({ url: data.url, name: file.name, type: file.type });
+      }
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "Sorry, couldn't upload that file. Please try again.", timestamp: new Date() },
+      ]);
+    } finally {
+      setLoading(false);
+      // Reset input so same file can be re-selected
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   async function sendMessage() {
     const text = input.trim();
-    if (!text || loading) return;
+    if ((!text && !pendingFile) || loading) return;
 
-    const userMsg: Message = { role: "user", content: text, timestamp: new Date() };
+    // If we have a pending confirm and user says yes/no, handle confirmation
+    if (pendingConfirm) {
+      const normalized = text.toLowerCase();
+      if (normalized === "yes" || normalized === "y" || normalized === "confirm") {
+        const userMsg: Message = { role: "user", content: text, timestamp: new Date() };
+        setMessages((prev) => [...prev, userMsg]);
+        setInput("");
+        setLoading(true);
+        try {
+          const res = await fetch("/api/ai/confirm-upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(pendingConfirm),
+          });
+          const data = await res.json();
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: data.reply ?? "✅ File saved!", timestamp: new Date() },
+          ]);
+          setPendingConfirm(null);
+        } catch {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: "Sorry, couldn't save the file. Please try again.", timestamp: new Date() },
+          ]);
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+      if (normalized === "no" || normalized === "n" || normalized === "cancel") {
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", content: text, timestamp: new Date() },
+          { role: "assistant", content: "Cancelled. Send the file again with a caption if you'd like to try.", timestamp: new Date() },
+        ]);
+        setInput("");
+        setPendingConfirm(null);
+        return;
+      }
+    }
+
+    const userMsg: Message = {
+      role: "user",
+      content: text || `[Attached: ${pendingFile?.name}]`,
+      timestamp: new Date(),
+      filePreview: pendingFile
+        ? { url: pendingFile.url, name: pendingFile.name, isImage: pendingFile.type.startsWith("image/") }
+        : undefined,
+    };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
+    const fileToSend = pendingFile;
+    setPendingFile(null);
     setLoading(true);
 
     try {
@@ -50,15 +140,24 @@ export default function AIChatWidget() {
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, history }),
+        body: JSON.stringify({
+          message: text,
+          history,
+          pendingFile: fileToSend ?? undefined,
+        }),
       });
 
       const data = await res.json();
       const reply = data.reply ?? "Sorry, something went wrong.";
+
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: reply, timestamp: new Date() },
       ]);
+
+      if (data.confirmUpload) {
+        setPendingConfirm(data.confirmUpload);
+      }
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -82,7 +181,6 @@ export default function AIChatWidget() {
 
   return (
     <>
-      {/* Chat drawer */}
       {open && (
         <div className="fixed bottom-36 right-4 md:bottom-24 z-50 flex flex-col w-[380px] max-w-[calc(100vw-2rem)] h-[500px] bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
           {/* Header */}
@@ -118,12 +216,30 @@ export default function AIChatWidget() {
                       : "bg-white text-slate-800 border border-slate-200 rounded-bl-sm shadow-sm"
                   }`}
                 >
+                  {msg.filePreview && (
+                    <div className="mb-1">
+                      {msg.filePreview.isImage ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={msg.filePreview.url}
+                          alt={msg.filePreview.name}
+                          className="rounded-lg max-w-full max-h-32 object-cover"
+                        />
+                      ) : (
+                        <div className="flex items-center gap-1 text-xs text-white/80">
+                          <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                          </svg>
+                          <span className="truncate">{msg.filePreview.name}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {msg.content}
                 </div>
               </div>
             ))}
 
-            {/* Typing indicator */}
             {loading && (
               <div className="flex justify-start">
                 <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm shadow-sm px-4 py-3">
@@ -139,21 +255,65 @@ export default function AIChatWidget() {
             <div ref={bottomRef} />
           </div>
 
+          {/* File preview bar */}
+          {pendingFile && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border-t border-blue-100 flex-shrink-0">
+              {pendingFile.type.startsWith("image/") ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={pendingFile.url} alt={pendingFile.name} className="w-10 h-10 rounded object-cover flex-shrink-0" />
+              ) : (
+                <div className="w-10 h-10 bg-blue-100 rounded flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+              )}
+              <span className="text-xs text-slate-600 flex-1 truncate">{pendingFile.name}</span>
+              <button
+                onClick={() => setPendingFile(null)}
+                className="text-slate-400 hover:text-slate-600 flex-shrink-0"
+                aria-label="Remove file"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
           {/* Input bar */}
           <div className="flex items-center gap-2 px-3 py-3 border-t border-slate-200 bg-white flex-shrink-0">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,application/pdf,.doc,.docx,.xlsx"
+              className="hidden"
+              onChange={handleFileSelect}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading}
+              className="text-slate-400 hover:text-blue-600 disabled:opacity-40 transition-colors flex-shrink-0 p-1"
+              aria-label="Attach file"
+              title="Attach photo or file"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+            </button>
             <input
               ref={inputRef}
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask about the schedule..."
+              placeholder={pendingFile ? "Add a caption..." : "Ask about the schedule..."}
               disabled={loading}
               className="flex-1 text-sm px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 bg-slate-50"
             />
             <button
               onClick={sendMessage}
-              disabled={loading || !input.trim()}
+              disabled={loading || (!input.trim() && !pendingFile)}
               className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl px-3 py-2 transition-colors flex-shrink-0"
               aria-label="Send message"
             >

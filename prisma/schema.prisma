@@ -147,6 +147,19 @@ model Document {
   createdAt    DateTime @default(now())
 }
 
+model PendingUpload {
+  id        String   @id @default(cuid())
+  chatId    String
+  blobUrl   String
+  fileName  String
+  fileType  String
+  jobId     String?
+  phaseId   String?
+  jobName   String?
+  phaseName String?
+  createdAt DateTime @default(now())
+}
+
 model ProductionLog {
   id         String   @id @default(cuid())
   date       DateTime
