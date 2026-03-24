@@ -9,6 +9,35 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 type HistoryMessage = { role: "user" | "assistant"; content: string };
 type PendingFile = { url: string; name: string; type: string };
 
+type Action =
+  | { type: "create_job"; name: string; address: string }
+  | {
+      type: "create_phase";
+      phaseName: string;
+      jobId: string | null;
+      jobName: string;
+      startDate: string | null;
+      endDate: string | null;
+    }
+  | {
+      type: "schedule_phase";
+      phaseId: string | null;
+      phaseName: string;
+      jobId: string | null;
+      jobName: string;
+      startDate: string;
+      endDate: string;
+    }
+  | {
+      type: "progress_update";
+      phaseId: string | null;
+      phaseName: string;
+      jobName: string;
+      notes: string;
+    }
+  | { type: "question" }
+  | { type: "unknown"; reason: string };
+
 async function buildScheduleContext() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -54,10 +83,10 @@ async function buildScheduleContext() {
         .map((p) => {
           const start = p.startDate ? p.startDate.toISOString().split("T")[0] : "no start";
           const end = p.endDate ? p.endDate.toISOString().split("T")[0] : "no end";
-          return `    - ${p.name} (${start} → ${end})`;
+          return `    - ${p.name} (${start} → ${end}) [phaseId: ${p.id}]`;
         })
         .join("\n");
-      return `Job: "${j.name}" (ID: ${j.id})\n${phases || "    (no phases)"}`;
+      return `Job: "${j.name}" [jobId: ${j.id}]\n${phases || "    (no phases)"}`;
     })
     .join("\n\n");
 
@@ -96,7 +125,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Message required" }, { status: 400 });
   }
 
-  // Handle file upload identification
+  // Handle file upload identification (unchanged)
   if (pendingFile) {
     const ctx = await buildScheduleContext();
     const { activeJobs } = ctx;
@@ -191,136 +220,94 @@ If there is no caption or you cannot determine the job, set all fields to null a
     }
   }
 
-  // Classify message
-  const classifyCompletion = await openai.chat.completions.create({
+  const ctx = await buildScheduleContext();
+  const { today, jobsContext, scheduleContext, overdueContext, usersContext, users, activeJobs } = ctx;
+  const askingUser = users.find((u) => u.email === session.user?.email);
+  const todayStr = today.toISOString().split("T")[0];
+
+  // Build a compact job+phase list for intent parsing
+  const jobPhaseIndex = activeJobs.map((j) => ({
+    id: j.id,
+    name: j.name,
+    phases: j.phases.map((p) => ({ id: p.id, name: p.name })),
+  }));
+
+  // Single LLM call: parse ALL intents from the message
+  const parseCompletion = await openai.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
         role: "system",
-        content:
-          'Classify this message as "question" (asking about the schedule), "update" (reporting progress on work), or "create" (requesting to create a new job or phase). Reply with only one word: question, update, or create.',
+        content: `You are a construction scheduling assistant for Williamson Civil Construction.
+Parse the user's message and extract ALL requested actions. Interpret the intent generously — the message may be garbled by autocorrect or typos.
+
+Today's date: ${todayStr}
+
+Active jobs and phases (use these IDs when referencing existing jobs/phases):
+${JSON.stringify(jobPhaseIndex, null, 2)}
+
+FUZZY MATCHING RULES:
+- Interpret autocorrect mangling liberally. Examples: "out of phase" → "add a phase", "out a phase" → "add a phase", "phase" could mean add/create
+- Match job and phase names case-insensitively and approximately (e.g. "vacation" matches a job named "Vacation")
+- "create" / "make" / "add" / "build" / "new" / "start" all mean create
+
+Return a JSON object: { "actions": [...] }
+
+Each action has a "type" field. Supported types:
+
+create_job — Create a new job:
+{ "type": "create_job", "name": "<job name>", "address": "<address or empty string>" }
+
+create_phase — Add a phase to a job:
+{ "type": "create_phase", "phaseName": "<phase name>", "jobId": "<job id or null if job is being created in same message>", "jobName": "<job name>", "startDate": "<YYYY-MM-DD or null>", "endDate": "<YYYY-MM-DD or null>" }
+
+schedule_phase — Set dates on an existing phase (use phaseId if known):
+{ "type": "schedule_phase", "phaseId": "<phase id or null>", "phaseName": "<phase name>", "jobId": "<job id or null>", "jobName": "<job name>", "startDate": "<YYYY-MM-DD>", "endDate": "<YYYY-MM-DD>" }
+
+progress_update — Log a progress note on a phase:
+{ "type": "progress_update", "phaseId": "<phase id or null>", "phaseName": "<phase name>", "jobName": "<job name>", "notes": "<note text>" }
+
+question — User is asking a question (answer it using schedule data, no DB changes):
+{ "type": "question" }
+
+unknown — Cannot determine intent:
+{ "type": "unknown", "reason": "<brief reason>" }
+
+DATE PARSING RULES (always output YYYY-MM-DD):
+- "week of [date]" = that Monday through Sunday (e.g. "week of April 6" = 2026-04-06 to 2026-04-12)
+- "next week" = next Monday through Sunday from today (${todayStr})
+- "[Month] [Day]-[Day]" = e.g. April 6-10 = 2026-04-06 to 2026-04-10
+- When only a start date is given with no end, infer end = start + 4 days (5-day work week)
+
+MULTI-STEP INSTRUCTIONS:
+- If a message asks to create a job AND add a phase AND schedule it, return 3 actions in order
+- For a newly created job's phase, set jobId to null in create_phase — it will be resolved at runtime
+- If a phase is created with dates in the same step, put the dates in create_phase (don't add a separate schedule_phase)
+
+Return ONLY the JSON object, no extra text.`,
       },
       { role: "user", content: message },
     ],
+    response_format: { type: "json_object" },
   });
-  const rawType = classifyCompletion.choices[0].message.content?.trim().toLowerCase() ?? "";
-  const msgType = rawType === "question" ? "question" : rawType === "create" ? "create" : "update";
 
-  const ctx = await buildScheduleContext();
-  const { today, jobsContext, scheduleContext, overdueContext, usersContext, users, activeJobs } = ctx;
-
-  const askingUser = users.find((u) => u.email === session.user?.email);
-
-  // Handle CREATE
-  if (msgType === "create") {
-    const jobList = activeJobs.map((j) => ({ id: j.id, name: j.name }));
-
-    const parseCompletion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `You are a construction scheduling assistant. Parse the user's request to create a job or phase.
-
-Active jobs (for phase creation):
-${JSON.stringify(jobList, null, 2)}
-
-Return a JSON object with one of these shapes:
-
-For creating a job:
-{
-  "action": "create_job",
-  "name": "<job name>",
-  "address": "<address or empty string if not provided>"
-}
-
-For creating a phase:
-{
-  "action": "create_phase",
-  "phaseName": "<phase name>",
-  "jobId": "<job id from the list above>",
-  "jobName": "<job name>"
-}
-
-If you cannot determine what to create or cannot match a phase to a job, return:
-{ "action": "unknown" }`,
-        },
-        { role: "user", content: message },
-      ],
-      response_format: { type: "json_object" },
-    });
-
-    let parsed: {
-      action: string;
-      name?: string;
-      address?: string;
-      phaseName?: string;
-      jobId?: string;
-      jobName?: string;
-    } = { action: "unknown" };
-
-    try {
-      parsed = JSON.parse(parseCompletion.choices[0].message.content ?? "{}");
-    } catch {
-      // fall through to unknown
-    }
-
-    if (parsed.action === "create_job") {
-      if (!parsed.name) {
-        return NextResponse.json({
-          reply: "I need a name for the job. What should the job be called?",
-        });
-      }
-      const newJob = await prisma.job.create({
-        data: {
-          name: parsed.name,
-          address: parsed.address || "TBD",
-          color: "#3B82F6",
-        },
-      });
-      return NextResponse.json({
-        reply: `✅ Created job **${newJob.name}**! You can view and edit it in the Jobs list.`,
-      });
-    }
-
-    if (parsed.action === "create_phase") {
-      if (!parsed.phaseName || !parsed.jobId) {
-        return NextResponse.json({
-          reply: "I need both a phase name and the job it belongs to. Which job should this phase be added to?",
-        });
-      }
-      const job = await prisma.job.findUnique({ where: { id: parsed.jobId } });
-      if (!job) {
-        return NextResponse.json({
-          reply: `I couldn't find the job "${parsed.jobName}". Please check the job name and try again.`,
-        });
-      }
-      const maxPhase = await prisma.phase.findFirst({
-        where: { jobId: parsed.jobId },
-        orderBy: { orderIndex: "desc" },
-      });
-      const newPhase = await prisma.phase.create({
-        data: {
-          name: parsed.phaseName,
-          orderIndex: (maxPhase?.orderIndex ?? -1) + 1,
-          jobId: parsed.jobId,
-        },
-      });
-      return NextResponse.json({
-        reply: `✅ Created phase **${newPhase.name}** in job **${job.name}**! Open the job to set dates and details.`,
-      });
-    }
-
-    // Unknown create intent — fall back to a helpful message
-    return NextResponse.json({
-      reply: "I can create jobs or phases for you. Just say something like \"Create a new job called Riverside Bridge at 123 Main St\" or \"Add a phase called Excavation to the West Alder job\".",
-    });
+  let actions: Action[] = [];
+  try {
+    const parsed = JSON.parse(parseCompletion.choices[0].message.content ?? "{}");
+    actions = Array.isArray(parsed.actions) ? parsed.actions : [];
+  } catch {
+    actions = [{ type: "unknown", reason: "Failed to parse intent" }];
   }
 
-  if (msgType === "question") {
+  if (actions.length === 0) {
+    actions = [{ type: "unknown", reason: "No actions found" }];
+  }
+
+  // If it's purely a question, route to Q&A
+  if (actions.length === 1 && actions[0].type === "question") {
     const systemPrompt = `You are a helpful construction scheduling assistant for Williamson Civil Construction. Answer the user's question using the schedule data below. Be concise and use line breaks to keep it readable.
 
-Today's date: ${today.toISOString().split("T")[0]}
+Today's date: ${todayStr}
 ${askingUser ? `The person asking: ${askingUser.name}` : ""}
 
 ACTIVE JOBS AND PHASES:
@@ -335,7 +322,7 @@ ${overdueContext || "None."}
 TEAM MEMBERS:
 ${usersContext}`;
 
-    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+    const qaMessages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: "system", content: systemPrompt },
       ...history.map((h) => ({ role: h.role, content: h.content } as OpenAI.Chat.ChatCompletionMessageParam)),
       { role: "user", content: message },
@@ -343,101 +330,198 @@ ${usersContext}`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages,
+      messages: qaMessages,
     });
 
     const reply = completion.choices[0].message.content ?? "Sorry, I couldn't generate an answer.";
     return NextResponse.json({ reply });
   }
 
-  // Handle UPDATE
-  const phases = await prisma.phase.findMany({
-    where: {
-      job: { status: "ACTIVE" },
-      startDate: { lte: new Date() },
-      endDate: { gte: today },
-    },
-    include: { job: { select: { id: true, name: true } } },
-    take: 30,
-  });
+  // Execute all actions sequentially
+  const summaryLines: string[] = [];
+  // Track jobs created in this message so subsequent phase actions can reference them
+  const createdJobsByName: Record<string, string> = {}; // name.toLowerCase() → id
 
-  // Also include all phases from active jobs (not just current ones)
-  const allActivePhases = activeJobs.flatMap((j) =>
-    j.phases.map((p) => ({ ...p, job: { id: j.id, name: j.name } }))
-  );
+  for (const action of actions) {
+    if (action.type === "question") {
+      // Mixed message — skip the Q&A part; mutations take priority
+      continue;
+    }
 
-  const phasePool = phases.length > 0 ? phases : allActivePhases;
+    if (action.type === "unknown") {
+      summaryLines.push(`⚠️ Couldn't understand part of your request: ${action.reason}`);
+      continue;
+    }
 
-  const phaseContext = phasePool
-    .map((p) => `- Phase ID: ${p.id}, Job: "${p.job.name}", Phase: "${p.name}"`)
-    .join("\n");
+    if (action.type === "create_job") {
+      if (!action.name) {
+        summaryLines.push("⚠️ Skipped job creation — no job name found.");
+        continue;
+      }
+      try {
+        const newJob = await prisma.job.create({
+          data: {
+            name: action.name,
+            address: action.address || "TBD",
+            color: "#3B82F6",
+          },
+        });
+        createdJobsByName[action.name.toLowerCase()] = newJob.id;
+        summaryLines.push(`✅ Created job **${newJob.name}**`);
+      } catch (err) {
+        console.error("create_job error", err);
+        summaryLines.push(`❌ Failed to create job "${action.name}"`);
+      }
+      continue;
+    }
 
-  const parseCompletion = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "system",
-        content: `You are a construction scheduling assistant. Parse the user's progress update and match it to the relevant phases below.
+    if (action.type === "create_phase") {
+      if (!action.phaseName) {
+        summaryLines.push("⚠️ Skipped phase creation — no phase name found.");
+        continue;
+      }
+      // Resolve jobId: might be null if the job was just created above
+      let jobId = action.jobId;
+      if (!jobId && action.jobName) {
+        jobId = createdJobsByName[action.jobName.toLowerCase()] ?? null;
+        // Also search existing jobs by fuzzy name
+        if (!jobId) {
+          const match = activeJobs.find(
+            (j) => j.name.toLowerCase() === action.jobName.toLowerCase()
+          );
+          jobId = match?.id ?? null;
+        }
+      }
+      if (!jobId) {
+        summaryLines.push(`⚠️ Couldn't find job "${action.jobName}" for phase "${action.phaseName}". Phase not created.`);
+        continue;
+      }
+      try {
+        const maxPhase = await prisma.phase.findFirst({
+          where: { jobId },
+          orderBy: { orderIndex: "desc" },
+        });
+        const newPhase = await prisma.phase.create({
+          data: {
+            name: action.phaseName,
+            orderIndex: (maxPhase?.orderIndex ?? -1) + 1,
+            jobId,
+            ...(action.startDate ? { startDate: new Date(action.startDate) } : {}),
+            ...(action.endDate ? { endDate: new Date(action.endDate) } : {}),
+          },
+        });
+        const dateStr =
+          action.startDate && action.endDate
+            ? ` (${action.startDate} → ${action.endDate})`
+            : "";
+        const jobLabel = action.jobName;
+        summaryLines.push(`✅ Created phase **${newPhase.name}** in **${jobLabel}**${dateStr}`);
+      } catch (err) {
+        console.error("create_phase error", err);
+        summaryLines.push(`❌ Failed to create phase "${action.phaseName}"`);
+      }
+      continue;
+    }
 
-Active phases:
-${phaseContext || "No active phases found."}
+    if (action.type === "schedule_phase") {
+      if (!action.startDate || !action.endDate) {
+        summaryLines.push(`⚠️ Skipped scheduling "${action.phaseName}" — no dates provided.`);
+        continue;
+      }
+      // Resolve phaseId
+      let phaseId = action.phaseId;
+      if (!phaseId) {
+        // Search by name within the job
+        const jobId = action.jobId ?? activeJobs.find(
+          (j) => j.name.toLowerCase() === action.jobName?.toLowerCase()
+        )?.id;
+        if (jobId) {
+          const job = activeJobs.find((j) => j.id === jobId);
+          const match = job?.phases.find(
+            (p) => p.name.toLowerCase() === action.phaseName.toLowerCase()
+          );
+          phaseId = match?.id ?? null;
+        }
+        // Also check phases just created in this message
+        if (!phaseId) {
+          const recentPhase = await prisma.phase.findFirst({
+            where: {
+              name: { equals: action.phaseName, mode: "insensitive" },
+              jobId: action.jobId ?? undefined,
+            },
+            orderBy: { orderIndex: "desc" },
+          });
+          phaseId = recentPhase?.id ?? null;
+        }
+      }
+      if (!phaseId) {
+        summaryLines.push(`⚠️ Couldn't find phase "${action.phaseName}" to schedule.`);
+        continue;
+      }
+      try {
+        await prisma.phase.update({
+          where: { id: phaseId },
+          data: {
+            startDate: new Date(action.startDate),
+            endDate: new Date(action.endDate),
+          },
+        });
+        summaryLines.push(`✅ Scheduled **${action.phaseName}** (${action.startDate} → ${action.endDate})`);
+      } catch (err) {
+        console.error("schedule_phase error", err);
+        summaryLines.push(`❌ Failed to schedule phase "${action.phaseName}"`);
+      }
+      continue;
+    }
 
-Return a JSON object:
-{
-  "updates": [
-    { "phaseId": "<id>", "jobName": "<name>", "phaseName": "<name>", "notes": "<parsed progress note>" }
-  ]
-}
-
-Only include phases clearly mentioned or inferable. If nothing matches, return { "updates": [] }.`,
-      },
-      { role: "user", content: message },
-    ],
-    response_format: { type: "json_object" },
-  });
-
-  let parsedUpdates: { phaseId: string; jobName: string; phaseName: string; notes: string }[] = [];
-  try {
-    const parsed = JSON.parse(parseCompletion.choices[0].message.content ?? "{}");
-    parsedUpdates = parsed.updates ?? [];
-  } catch {
-    return NextResponse.json({
-      reply: "I received your update but had trouble parsing it. Please check the schedule manually.",
-    });
-  }
-
-  if (parsedUpdates.length === 0) {
-    return NextResponse.json({
-      reply: "I received your message but couldn't match it to any active phases. Please update the schedule manually if needed.",
-    });
-  }
-
-  const updateSummary: string[] = [];
-  for (const update of parsedUpdates) {
-    try {
-      const phase = phasePool.find((p) => p.id === update.phaseId);
-      if (!phase) continue;
-      await prisma.productionLog.create({
-        data: {
-          date: new Date(),
-          metricName: "Progress Update",
-          value: 0,
-          unit: "note",
-          notes: update.notes,
-          jobId: phase.job.id,
-          phaseId: update.phaseId,
-        },
-      });
-      updateSummary.push(`• ${update.jobName} — ${update.phaseName}: ${update.notes}`);
-    } catch (err) {
-      console.error("Failed to log update for phase", update.phaseId, err);
+    if (action.type === "progress_update") {
+      // Resolve phaseId
+      let phaseId = action.phaseId;
+      if (!phaseId) {
+        const job = activeJobs.find(
+          (j) => j.name.toLowerCase() === action.jobName?.toLowerCase()
+        );
+        const match = job?.phases.find(
+          (p) => p.name.toLowerCase() === action.phaseName.toLowerCase()
+        );
+        phaseId = match?.id ?? null;
+      }
+      if (!phaseId) {
+        summaryLines.push(`⚠️ Couldn't match phase "${action.phaseName}" for progress update.`);
+        continue;
+      }
+      try {
+        const phase = activeJobs
+          .flatMap((j) => j.phases.map((p) => ({ ...p, jobId: j.id })))
+          .find((p) => p.id === phaseId);
+        if (phase) {
+          await prisma.productionLog.create({
+            data: {
+              date: new Date(),
+              metricName: "Progress Update",
+              value: 0,
+              unit: "note",
+              notes: action.notes,
+              jobId: phase.jobId,
+              phaseId,
+            },
+          });
+          summaryLines.push(`✅ Logged update for **${action.phaseName}**: ${action.notes}`);
+        }
+      } catch (err) {
+        console.error("progress_update error", err);
+        summaryLines.push(`❌ Failed to log update for "${action.phaseName}"`);
+      }
+      continue;
     }
   }
 
-  const reply =
-    updateSummary.length > 0
-      ? `Got it! Logged the following updates:\n${updateSummary.join("\n")}`
-      : "I received your update but had trouble saving it. Please check the schedule manually.";
+  if (summaryLines.length === 0) {
+    return NextResponse.json({
+      reply:
+        "I wasn't sure what to do with that. Try something like:\n• \"Create a job called Bridge St\"\n• \"Add a phase called Excavation to Bridge St, schedule it for the week of April 6\"\n• \"What's on the schedule this week?\"",
+    });
+  }
 
-  return NextResponse.json({ reply });
+  return NextResponse.json({ reply: summaryLines.join("\n") });
 }
