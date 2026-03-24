@@ -25,8 +25,8 @@ type Action =
       phaseName: string;
       jobId: string | null;
       jobName: string;
-      startDate: string;
-      endDate: string;
+      startDate: string | null;
+      endDate: string | null;
     }
   | {
       type: "progress_update";
@@ -225,11 +225,16 @@ If there is no caption or you cannot determine the job, set all fields to null a
   const askingUser = users.find((u) => u.email === session.user?.email);
   const todayStr = today.toISOString().split("T")[0];
 
-  // Build a compact job+phase list for intent parsing
+  // Build a compact job+phase list for intent parsing (include dates so LLM can reuse them)
   const jobPhaseIndex = activeJobs.map((j) => ({
     id: j.id,
     name: j.name,
-    phases: j.phases.map((p) => ({ id: p.id, name: p.name })),
+    phases: j.phases.map((p) => ({
+      id: p.id,
+      name: p.name,
+      startDate: p.startDate ? p.startDate.toISOString().split("T")[0] : null,
+      endDate: p.endDate ? p.endDate.toISOString().split("T")[0] : null,
+    })),
   }));
 
   // Single LLM call: parse ALL intents from the message
@@ -262,7 +267,8 @@ create_phase — Add a phase to a job:
 { "type": "create_phase", "phaseName": "<phase name>", "jobId": "<job id or null if job is being created in same message>", "jobName": "<job name>", "startDate": "<YYYY-MM-DD or null>", "endDate": "<YYYY-MM-DD or null>" }
 
 schedule_phase — Set dates on an existing phase (use phaseId if known):
-{ "type": "schedule_phase", "phaseId": "<phase id or null>", "phaseName": "<phase name>", "jobId": "<job id or null>", "jobName": "<job name>", "startDate": "<YYYY-MM-DD>", "endDate": "<YYYY-MM-DD>" }
+{ "type": "schedule_phase", "phaseId": "<phase id or null>", "phaseName": "<phase name>", "jobId": "<job id or null>", "jobName": "<job name>", "startDate": "<YYYY-MM-DD or null>", "endDate": "<YYYY-MM-DD or null>" }
+IMPORTANT: If the user is scheduling/assigning someone to a phase that already has dates in the index above, and the user does NOT mention new dates, copy the existing startDate/endDate from the phase index into this action — do NOT default to the current week. Only set null if the phase has no existing dates and the user provides none.
 
 progress_update — Log a progress note on a phase:
 { "type": "progress_update", "phaseId": "<phase id or null>", "phaseName": "<phase name>", "jobName": "<job name>", "notes": "<note text>" }
@@ -424,10 +430,6 @@ ${usersContext}`;
     }
 
     if (action.type === "schedule_phase") {
-      if (!action.startDate || !action.endDate) {
-        summaryLines.push(`⚠️ Skipped scheduling "${action.phaseName}" — no dates provided.`);
-        continue;
-      }
       // Resolve phaseId
       let phaseId = action.phaseId;
       if (!phaseId) {
@@ -458,15 +460,29 @@ ${usersContext}`;
         summaryLines.push(`⚠️ Couldn't find phase "${action.phaseName}" to schedule.`);
         continue;
       }
+      // Fall back to existing phase dates if LLM didn't provide them
+      let startDate = action.startDate;
+      let endDate = action.endDate;
+      if (!startDate || !endDate) {
+        const existingPhase = activeJobs.flatMap((j) => j.phases).find((p) => p.id === phaseId);
+        if (existingPhase) {
+          startDate = startDate ?? (existingPhase.startDate ? existingPhase.startDate.toISOString().split("T")[0] : null);
+          endDate = endDate ?? (existingPhase.endDate ? existingPhase.endDate.toISOString().split("T")[0] : null);
+        }
+      }
+      if (!startDate || !endDate) {
+        summaryLines.push(`⚠️ Skipped scheduling "${action.phaseName}" — no dates provided or found.`);
+        continue;
+      }
       try {
         await prisma.phase.update({
           where: { id: phaseId },
           data: {
-            startDate: new Date(action.startDate),
-            endDate: new Date(action.endDate),
+            startDate: new Date(startDate),
+            endDate: new Date(endDate),
           },
         });
-        summaryLines.push(`✅ Scheduled **${action.phaseName}** (${action.startDate} → ${action.endDate})`);
+        summaryLines.push(`✅ Scheduled **${action.phaseName}** (${startDate} → ${endDate})`);
       } catch (err) {
         console.error("schedule_phase error", err);
         summaryLines.push(`❌ Failed to schedule phase "${action.phaseName}"`);

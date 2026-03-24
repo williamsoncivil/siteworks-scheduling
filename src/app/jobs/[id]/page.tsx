@@ -286,6 +286,8 @@ export default function JobDetailPage() {
   const [newPhaseDuration, setNewPhaseDuration] = useState<number | "">(7);
   const [newPhasePredecessorId, setNewPhasePredecessorId] = useState("");
   const [editingPhaseId, setEditingPhaseId] = useState<string | null>(null);
+  const [editingPhaseNameId, setEditingPhaseNameId] = useState<string | null>(null);
+  const [phaseNameInputValue, setPhaseNameInputValue] = useState("");
   const [expandedPhaseIds, setExpandedPhaseIds] = useState<Set<string>>(new Set());
   const [phaseMessages, setPhaseMessages] = useState<Record<string, { id: string; content: string; createdAt: string; author: { name: string } }[]>>({});
   const [phaseMessageInput, setPhaseMessageInput] = useState<Record<string, string>>({});
@@ -306,6 +308,18 @@ export default function JobDetailPage() {
     await fetchPhaseMessages(phaseId);
     setPhaseMessageSending(null);
   };
+  const savePhaseNameEdit = async (phaseId: string) => {
+    const newName = phaseNameInputValue.trim();
+    setEditingPhaseNameId(null);
+    if (!newName) return;
+    await fetch(`/api/jobs/${jobId}/phases`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phaseId, name: newName }),
+    });
+    await fetchJob();
+  };
+
   const togglePhaseExpand = (id: string) => {
     setExpandedPhaseIds((prev) => {
       const next = new Set(prev);
@@ -1430,8 +1444,30 @@ export default function JobDetailPage() {
                         </div>
                         <span className="text-xs text-gray-400 w-5 text-center">{idx + 1}</span>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <p className="font-medium text-gray-900 text-sm">{phase.name}</p>
+                          <div className="flex items-center gap-1.5 flex-wrap group/phasename">
+                            {editingPhaseNameId === phase.id ? (
+                              <input
+                                autoFocus
+                                value={phaseNameInputValue}
+                                onChange={(e) => setPhaseNameInputValue(e.target.value)}
+                                onBlur={() => savePhaseNameEdit(phase.id)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") { e.preventDefault(); savePhaseNameEdit(phase.id); }
+                                  if (e.key === "Escape") setEditingPhaseNameId(null);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="font-medium text-gray-900 text-sm border border-blue-400 rounded px-1 focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-0 w-48"
+                              />
+                            ) : (
+                              <p className="font-medium text-gray-900 text-sm">{phase.name}</p>
+                            )}
+                            {editingPhaseNameId !== phase.id && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setEditingPhaseNameId(phase.id); setPhaseNameInputValue(phase.name); }}
+                                className="opacity-0 group-hover/phasename:opacity-100 text-gray-400 hover:text-gray-600 transition-opacity text-xs leading-none"
+                                title="Rename phase"
+                              >✏️</button>
+                            )}
                             {hasDeps && <span title="Has dependencies" className="text-sm">🔗</span>}
                             {isBlocked && (
                               <span
