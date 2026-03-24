@@ -29,6 +29,17 @@ type Action =
       endDate: string | null;
     }
   | {
+      type: "assign_worker";
+      userId: string | null;
+      userName: string;
+      phaseId: string | null;
+      phaseName: string;
+      jobId: string | null;
+      jobName: string;
+      startDate: string;
+      endDate: string;
+    }
+  | {
       type: "progress_update";
       phaseId: string | null;
       phaseName: string;
@@ -268,7 +279,15 @@ create_phase — Add a phase to a job:
 
 schedule_phase — Set dates on an existing phase (use phaseId if known):
 { "type": "schedule_phase", "phaseId": "<phase id or null>", "phaseName": "<phase name>", "jobId": "<job id or null>", "jobName": "<job name>", "startDate": "<YYYY-MM-DD or null>", "endDate": "<YYYY-MM-DD or null>" }
-IMPORTANT: If the user is scheduling/assigning someone to a phase that already has dates in the index above, and the user does NOT mention new dates, copy the existing startDate/endDate from the phase index into this action — do NOT default to the current week. Only set null if the phase has no existing dates and the user provides none.
+
+assign_worker — Assign a person (create ScheduleEntry records) to a job/phase for a date range:
+{ "type": "assign_worker", "userId": "<user id or null>", "userName": "<user name>", "phaseId": "<phase id or null>", "phaseName": "<phase name>", "jobId": "<job id or null>", "jobName": "<job name>", "startDate": "<YYYY-MM-DD>", "endDate": "<YYYY-MM-DD>" }
+
+IMPORTANT DISTINCTION:
+- "schedule phase X for April 6-10" → schedule_phase (update phase dates)
+- "schedule Tom for phase X" / "assign Tom to phase X" / "put Tom on phase X" → assign_worker (create schedule entries for Tom)
+- A message can contain BOTH: "create phase X for April 6-10 and schedule Tom for it" → create_phase + assign_worker
+- When assigning a worker and no dates are provided, use the phase's existing startDate/endDate from the job/phase index above — do NOT leave them null
 
 progress_update — Log a progress note on a phase:
 { "type": "progress_update", "phaseId": "<phase id or null>", "phaseName": "<phase name>", "jobName": "<job name>", "notes": "<note text>" }
@@ -487,6 +506,99 @@ ${usersContext}`;
         console.error("schedule_phase error", err);
         summaryLines.push(`❌ Failed to schedule phase "${action.phaseName}"`);
       }
+      continue;
+    }
+
+    if (action.type === "assign_worker") {
+      // Resolve userId from userName (fuzzy match)
+      let userId = action.userId;
+      if (!userId && action.userName) {
+        const match = users.find(
+          (u) =>
+            u.name.toLowerCase().includes(action.userName.toLowerCase()) ||
+            action.userName.toLowerCase().includes(u.name.toLowerCase().split(" ")[0])
+        );
+        userId = match?.id ?? null;
+      }
+      if (!userId) {
+        summaryLines.push(`⚠️ Couldn't find user "${action.userName}" to schedule.`);
+        continue;
+      }
+
+      // Resolve phaseId
+      let phaseId = action.phaseId;
+      if (!phaseId) {
+        const jobId = action.jobId ?? activeJobs.find(
+          (j) => j.name.toLowerCase() === action.jobName?.toLowerCase()
+        )?.id;
+        if (jobId) {
+          const job = activeJobs.find((j) => j.id === jobId);
+          const match = job?.phases.find(
+            (p) => p.name.toLowerCase() === action.phaseName.toLowerCase()
+          );
+          phaseId = match?.id ?? null;
+        }
+        if (!phaseId) {
+          const recentPhase = await prisma.phase.findFirst({
+            where: {
+              name: { equals: action.phaseName, mode: "insensitive" },
+              jobId: action.jobId ?? undefined,
+            },
+            orderBy: { orderIndex: "desc" },
+          });
+          phaseId = recentPhase?.id ?? null;
+        }
+      }
+
+      // Resolve dates — if not provided, use phase's existing dates
+      let startDate = action.startDate;
+      let endDate = action.endDate;
+      if ((!startDate || !endDate) && phaseId) {
+        const phase = activeJobs.flatMap((j) => j.phases).find((p) => p.id === phaseId);
+        if (phase?.startDate) startDate = startDate || phase.startDate.toISOString().split("T")[0];
+        if (phase?.endDate) endDate = endDate || phase.endDate.toISOString().split("T")[0];
+      }
+      if (!startDate || !endDate) {
+        summaryLines.push(`⚠️ No dates for scheduling ${action.userName} — provide a date range.`);
+        continue;
+      }
+
+      // Resolve jobId for ScheduleEntry (required field)
+      const resolvedJobId = action.jobId ??
+        activeJobs.find((j) => j.name.toLowerCase() === action.jobName?.toLowerCase())?.id ??
+        (phaseId ? activeJobs.find((j) => j.phases.some((p) => p.id === phaseId))?.id : null);
+      if (!resolvedJobId) {
+        summaryLines.push(`⚠️ Couldn't resolve job for "${action.phaseName}" — worker not scheduled.`);
+        continue;
+      }
+
+      // Create one ScheduleEntry per working day (Mon–Fri)
+      const start = new Date(startDate + "T12:00:00Z");
+      const end = new Date(endDate + "T12:00:00Z");
+      let count = 0;
+      const cur = new Date(start);
+      while (cur <= end) {
+        const day = cur.getUTCDay();
+        if (day !== 0 && day !== 6) {
+          await prisma.scheduleEntry.create({
+            data: {
+              date: new Date(cur),
+              userId,
+              jobId: resolvedJobId,
+              startTime: "",
+              endTime: "",
+              ...(phaseId ? { phaseId } : {}),
+            },
+          });
+          count++;
+        }
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+
+      const user = users.find((u) => u.id === userId);
+      summaryLines.push(
+        `✅ Assigned **${user?.name ?? action.userName}** to **${action.phaseName || action.jobName}** for ${count} day(s) (${startDate} → ${endDate})`
+      );
       continue;
     }
 
