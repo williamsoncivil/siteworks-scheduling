@@ -57,7 +57,7 @@ async function buildScheduleContext() {
           return `    - ${p.name} (${start} → ${end})`;
         })
         .join("\n");
-      return `Job: "${j.name}"\n${phases || "    (no phases)"}`;
+      return `Job: "${j.name}" (ID: ${j.id})\n${phases || "    (no phases)"}`;
     })
     .join("\n\n");
 
@@ -198,20 +198,124 @@ If there is no caption or you cannot determine the job, set all fields to null a
       {
         role: "system",
         content:
-          'Classify this message as either "question" (asking about the schedule) or "update" (reporting progress on work). Reply with only one word: question or update.',
+          'Classify this message as "question" (asking about the schedule), "update" (reporting progress on work), or "create" (requesting to create a new job or phase). Reply with only one word: question, update, or create.',
       },
       { role: "user", content: message },
     ],
   });
-  const msgType =
-    classifyCompletion.choices[0].message.content?.trim().toLowerCase() === "question"
-      ? "question"
-      : "update";
+  const rawType = classifyCompletion.choices[0].message.content?.trim().toLowerCase() ?? "";
+  const msgType = rawType === "question" ? "question" : rawType === "create" ? "create" : "update";
 
   const ctx = await buildScheduleContext();
   const { today, jobsContext, scheduleContext, overdueContext, usersContext, users, activeJobs } = ctx;
 
   const askingUser = users.find((u) => u.email === session.user?.email);
+
+  // Handle CREATE
+  if (msgType === "create") {
+    const jobList = activeJobs.map((j) => ({ id: j.id, name: j.name }));
+
+    const parseCompletion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are a construction scheduling assistant. Parse the user's request to create a job or phase.
+
+Active jobs (for phase creation):
+${JSON.stringify(jobList, null, 2)}
+
+Return a JSON object with one of these shapes:
+
+For creating a job:
+{
+  "action": "create_job",
+  "name": "<job name>",
+  "address": "<address or empty string if not provided>"
+}
+
+For creating a phase:
+{
+  "action": "create_phase",
+  "phaseName": "<phase name>",
+  "jobId": "<job id from the list above>",
+  "jobName": "<job name>"
+}
+
+If you cannot determine what to create or cannot match a phase to a job, return:
+{ "action": "unknown" }`,
+        },
+        { role: "user", content: message },
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    let parsed: {
+      action: string;
+      name?: string;
+      address?: string;
+      phaseName?: string;
+      jobId?: string;
+      jobName?: string;
+    } = { action: "unknown" };
+
+    try {
+      parsed = JSON.parse(parseCompletion.choices[0].message.content ?? "{}");
+    } catch {
+      // fall through to unknown
+    }
+
+    if (parsed.action === "create_job") {
+      if (!parsed.name) {
+        return NextResponse.json({
+          reply: "I need a name for the job. What should the job be called?",
+        });
+      }
+      const newJob = await prisma.job.create({
+        data: {
+          name: parsed.name,
+          address: parsed.address || "TBD",
+          color: "#3B82F6",
+        },
+      });
+      return NextResponse.json({
+        reply: `✅ Created job **${newJob.name}**! You can view and edit it in the Jobs list.`,
+      });
+    }
+
+    if (parsed.action === "create_phase") {
+      if (!parsed.phaseName || !parsed.jobId) {
+        return NextResponse.json({
+          reply: "I need both a phase name and the job it belongs to. Which job should this phase be added to?",
+        });
+      }
+      const job = await prisma.job.findUnique({ where: { id: parsed.jobId } });
+      if (!job) {
+        return NextResponse.json({
+          reply: `I couldn't find the job "${parsed.jobName}". Please check the job name and try again.`,
+        });
+      }
+      const maxPhase = await prisma.phase.findFirst({
+        where: { jobId: parsed.jobId },
+        orderBy: { orderIndex: "desc" },
+      });
+      const newPhase = await prisma.phase.create({
+        data: {
+          name: parsed.phaseName,
+          orderIndex: (maxPhase?.orderIndex ?? -1) + 1,
+          jobId: parsed.jobId,
+        },
+      });
+      return NextResponse.json({
+        reply: `✅ Created phase **${newPhase.name}** in job **${job.name}**! Open the job to set dates and details.`,
+      });
+    }
+
+    // Unknown create intent — fall back to a helpful message
+    return NextResponse.json({
+      reply: "I can create jobs or phases for you. Just say something like \"Create a new job called Riverside Bridge at 123 Main St\" or \"Add a phase called Excavation to the West Alder job\".",
+    });
+  }
 
   if (msgType === "question") {
     const systemPrompt = `You are a helpful construction scheduling assistant for Williamson Civil Construction. Answer the user's question using the schedule data below. Be concise and use line breaks to keep it readable.

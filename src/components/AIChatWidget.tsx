@@ -19,16 +19,52 @@ type Message = {
   filePreview?: { url: string; name: string; isImage: boolean };
 };
 
+type StoredMessage = {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+  filePreview?: { url: string; name: string; isImage: boolean };
+};
+
+const STORAGE_KEY = "ai_chat_history";
+const MAX_STORED = 100;
+
 const WELCOME: Message = {
   role: "assistant",
   content:
-    "Hi! Ask me anything about your schedule — active jobs, phases, who's working, upcoming deadlines, or send a progress update. You can also attach a photo or file 📎",
+    "Hi! Ask me anything about your schedule — active jobs, phases, who's working, upcoming deadlines, or send a progress update. You can also create jobs or phases, or attach a photo or file 📎",
   timestamp: new Date(),
 };
 
+function loadHistory(): Message[] {
+  if (typeof window === "undefined") return [WELCOME];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [WELCOME];
+    const stored: StoredMessage[] = JSON.parse(raw);
+    if (!Array.isArray(stored) || stored.length === 0) return [WELCOME];
+    return stored.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }));
+  } catch {
+    return [WELCOME];
+  }
+}
+
+function saveHistory(messages: Message[]) {
+  if (typeof window === "undefined") return;
+  try {
+    const toStore: StoredMessage[] = messages.slice(-MAX_STORED).map((m) => ({
+      ...m,
+      timestamp: m.timestamp.toISOString(),
+    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+  } catch {
+    // storage full or unavailable — ignore
+  }
+}
+
 export default function AIChatWidget() {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([WELCOME]);
+  const [messages, setMessages] = useState<Message[]>(() => loadHistory());
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingFile, setPendingFile] = useState<{ url: string; name: string; type: string } | null>(null);
@@ -46,6 +82,11 @@ export default function AIChatWidget() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  // Persist messages to localStorage whenever they change
+  useEffect(() => {
+    saveHistory(messages);
+  }, [messages]);
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -134,7 +175,7 @@ export default function AIChatWidget() {
 
     try {
       const history = messages
-        .filter((m) => m.role !== "assistant" || m !== WELCOME)
+        .filter((m) => m.role !== "assistant" || m.content !== WELCOME.content)
         .map((m) => ({ role: m.role, content: m.content }));
 
       const res = await fetch("/api/ai/chat", {
@@ -179,6 +220,10 @@ export default function AIChatWidget() {
     }
   }
 
+  function clearHistory() {
+    setMessages([WELCOME]);
+  }
+
   return (
     <>
       {open && (
@@ -191,15 +236,25 @@ export default function AIChatWidget() {
               </div>
               <span className="font-semibold text-sm">Siteworks AI</span>
             </div>
-            <button
-              onClick={() => setOpen(false)}
-              className="text-white/80 hover:text-white transition-colors p-1 rounded"
-              aria-label="Close chat"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={clearHistory}
+                className="text-white/60 hover:text-white transition-colors p-1 rounded text-xs"
+                title="Clear chat history"
+                aria-label="Clear chat history"
+              >
+                Clear
+              </button>
+              <button
+                onClick={() => setOpen(false)}
+                className="text-white/80 hover:text-white transition-colors p-1 rounded"
+                aria-label="Close chat"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
@@ -307,7 +362,7 @@ export default function AIChatWidget() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={pendingFile ? "Add a caption..." : "Ask about the schedule..."}
+              placeholder={pendingFile ? "Add a caption..." : "Ask or create jobs/phases..."}
               disabled={loading}
               className="flex-1 text-sm px-3 py-2 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50 bg-slate-50"
             />
