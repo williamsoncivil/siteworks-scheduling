@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import Layout from "@/components/Layout";
+import { PREDEFINED_CATEGORIES } from "@/lib/categories";
 
 interface User {
   id: string;
@@ -51,6 +52,12 @@ export default function SettingsPage() {
   const [subError, setSubError] = useState("");
   const [subSuccess, setSubSuccess] = useState(false);
 
+  // Phase Categories
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [newCategory, setNewCategory] = useState("");
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [categoryError, setCategoryError] = useState("");
+
   const fetchUsers = async () => {
     const res = await fetch("/api/people");
     const data = await res.json();
@@ -68,7 +75,62 @@ export default function SettingsPage() {
       if (d.telegramChatId) setTelegramChatId(d.telegramChatId);
       if (typeof d.endOfDayPrompt === "boolean") setEndOfDayPrompt(d.endOfDayPrompt);
     });
-  }, []);
+    // Load custom categories (if admin)
+    if (session?.user?.role === "ADMIN") {
+      fetch("/api/settings/categories").then((r) => r.json()).then((d) => {
+        if (d.custom) setCustomCategories(d.custom);
+      });
+    }
+  }, [session?.user?.role]);
+
+  const addCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const catName = newCategory.trim().toLowerCase();
+    if (!catName) {
+      setCategoryError("Category name is required");
+      return;
+    }
+    if (PREDEFINED_CATEGORIES.includes(catName) || customCategories.includes(catName)) {
+      setCategoryError("Category already exists");
+      return;
+    }
+    setAddingCategory(true);
+    setCategoryError("");
+    try {
+      const res = await fetch("/api/settings/categories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: catName }),
+      });
+      if (res.ok) {
+        setCustomCategories([...customCategories, catName]);
+        setNewCategory("");
+      } else {
+        const err = await res.json();
+        setCategoryError(err.error || "Failed to add category");
+      }
+    } catch (err) {
+      setCategoryError("Error adding category");
+    } finally {
+      setAddingCategory(false);
+    }
+  };
+
+  const removeCategory = async (catName: string) => {
+    if (!confirm(`Remove category "${catName}"?`)) return;
+    try {
+      const res = await fetch(`/api/settings/categories?name=${encodeURIComponent(catName)}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setCustomCategories(customCategories.filter((c) => c !== catName));
+      } else {
+        setCategoryError("Failed to remove category");
+      }
+    } catch (err) {
+      setCategoryError("Error removing category");
+    }
+  };
 
   const saveTelegramSettings = async () => {
     setSavingTelegram(true);
@@ -412,6 +474,77 @@ export default function SettingsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        )}
+
+        {/* Phase Categories */}
+        {isAdmin && (
+          <div className="bg-white rounded-xl shadow-sm p-6">
+            <h2 className="font-semibold text-gray-900 mb-4">Phase Categories</h2>
+            <p className="text-sm text-gray-600 mb-4">Manage custom phase categories. Predefined categories are always available.</p>
+
+            {categoryError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                {categoryError}
+              </div>
+            )}
+
+            {/* Predefined categories */}
+            <div className="mb-6">
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">Predefined</h3>
+              <div className="flex flex-wrap gap-2">
+                {PREDEFINED_CATEGORIES.map((cat) => (
+                  <span key={cat} className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
+                    {cat}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom categories */}
+            {customCategories.length > 0 && (
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold text-gray-700 mb-2">Custom</h3>
+                <div className="flex flex-wrap gap-2">
+                  {customCategories.map((cat) => (
+                    <div
+                      key={cat}
+                      className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2"
+                    >
+                      {cat}
+                      <button
+                        onClick={() => removeCategory(cat)}
+                        className="ml-1 text-indigo-600 hover:text-indigo-800 font-bold text-xs"
+                        title="Delete category"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Add new category */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">Add Custom Category</h3>
+              <form onSubmit={addCategory} className="flex gap-2">
+                <input
+                  type="text"
+                  value={newCategory}
+                  onChange={(e) => setNewCategory(e.target.value)}
+                  placeholder="e.g., Landscaping, Concrete..."
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <button
+                  type="submit"
+                  disabled={addingCategory || !newCategory.trim()}
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {addingCategory ? "Adding..." : "Add"}
+                </button>
+              </form>
+            </div>
           </div>
         )}
 
