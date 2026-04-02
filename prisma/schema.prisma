@@ -56,6 +56,7 @@ model Phase {
   endDate         DateTime?
   dependsOnId     String?
   completion      Int               @default(0)
+  category        String?
   dependsOn       Phase?            @relation("PhaseDeps", fields: [dependsOnId], references: [id])
   dependents      Phase[]           @relation("PhaseDeps")
   predecessorDeps PhaseDependency[] @relation("PredecessorDeps")

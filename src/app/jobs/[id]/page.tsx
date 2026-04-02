@@ -8,6 +8,7 @@ import Layout from "@/components/Layout";
 import CopyJobModal from "@/components/CopyJobModal";
 import Link from "next/link";
 import { format, parseISO, parse, addDays } from "date-fns";
+import { PREDEFINED_CATEGORIES, sortPhasesByCategory, sortPhasesByDate } from "@/lib/categories";
 
 // Parse a date string (YYYY-MM-DD or ISO) as LOCAL midnight to avoid UTC timezone shift
 const parseLocalDate = (dateStr: string) => parse(dateStr.split("T")[0], "yyyy-MM-dd", new Date());
@@ -176,6 +177,7 @@ interface Phase {
   endDate: string | null;
   dependsOnId: string | null;
   completion: number;
+  category: string | null;
   predecessorDeps?: PhaseDependency[];
   successorDeps?: PhaseDependency[];
 }
@@ -285,6 +287,8 @@ export default function JobDetailPage() {
   const [newPhaseStart, setNewPhaseStart] = useState("");
   const [newPhaseDuration, setNewPhaseDuration] = useState<number | "">(7);
   const [newPhasePredecessorId, setNewPhasePredecessorId] = useState("");
+  const [newPhaseCategory, setNewPhaseCategory] = useState("");
+  const [viewPhaseBy, setViewPhaseBy] = useState<"category" | "date">("category");
   const [editingPhaseId, setEditingPhaseId] = useState<string | null>(null);
   const [editingPhaseNameId, setEditingPhaseNameId] = useState<string | null>(null);
   const [phaseNameInputValue, setPhaseNameInputValue] = useState("");
@@ -331,6 +335,7 @@ export default function JobDetailPage() {
   const [phaseEditEnd, setPhaseEditEnd] = useState("");
   const [phaseEditDuration, setPhaseEditDuration] = useState<number | "">("");
   const [phaseEditDependsOn, setPhaseEditDependsOn] = useState("");
+  const [phaseEditCategory, setPhaseEditCategory] = useState("");
   const [cascadeModal, setCascadeModal] = useState<CascadeModal | null>(null);
   const [savingPhase, setSavingPhase] = useState(false);
 
@@ -619,7 +624,7 @@ export default function JobDetailPage() {
     const res = await fetch(`/api/jobs/${jobId}/phases`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newPhaseName, description: newPhaseDesc, startDate, endDate }),
+      body: JSON.stringify({ name: newPhaseName, description: newPhaseDesc, startDate, endDate, category: newPhaseCategory || null }),
     });
     if (res.ok && newPhasePredecessorId) {
       const created = await res.json();
@@ -635,6 +640,7 @@ export default function JobDetailPage() {
     setNewPhaseStart("");
     setNewPhaseDuration(7);
     setNewPhasePredecessorId("");
+    setNewPhaseCategory("");
     fetchJob();
   };
 
@@ -675,6 +681,7 @@ export default function JobDetailPage() {
     setPhaseEditEnd(end);
     setPhaseEditDuration(durationFromDates(start, end) ?? "");
     setPhaseEditDependsOn(phase.dependsOnId || "");
+    setPhaseEditCategory(phase.category || "");
   };
 
   const savePhaseDates = async (phase: Phase) => {
@@ -705,11 +712,11 @@ export default function JobDetailPage() {
       } else {
         // No dependents — just save directly
         await commitPhaseDates(phase.id, phaseEditStart, phaseEditEnd);
-        // Also update dependsOn
+        // Also update dependsOn and category
         await fetch(`/api/jobs/${jobId}/phases`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phaseId: phase.id, dependsOnId: phaseEditDependsOn }),
+          body: JSON.stringify({ phaseId: phase.id, dependsOnId: phaseEditDependsOn, category: phaseEditCategory || null }),
         });
         setEditingPhaseId(null);
         fetchJob();
@@ -1410,12 +1417,42 @@ export default function JobDetailPage() {
         {activeTab === "phases" && (
           <div className="space-y-4">
             <div className="bg-white rounded-xl shadow-sm p-6">
-              <h2 className="font-semibold text-gray-900 mb-4">Phases</h2>
+              <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
+                <h2 className="font-semibold text-gray-900">Phases</h2>
+                {phases.length > 0 && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setViewPhaseBy("category")}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        viewPhaseBy === "category"
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      By Category
+                    </button>
+                    <button
+                      onClick={() => setViewPhaseBy("date")}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                        viewPhaseBy === "date"
+                          ? "bg-blue-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      By Date
+                    </button>
+                  </div>
+                )}
+              </div>
               {phases.length === 0 ? (
                 <p className="text-gray-400 text-sm">No phases yet</p>
               ) : (
                 <div className="space-y-3">
-                  {phases.map((phase, idx) => {
+                  {(viewPhaseBy === "category" ? sortPhasesByCategory(phases) : [{category: null, phases: sortPhasesByDate(phases)}]).map((group: any) => (
+                    <div key={group.category || "date-view"}>
+                      {group.category && <h3 className="text-sm font-semibold text-gray-700 mb-2 px-2 py-1 bg-gray-50 rounded-lg">{group.category}</h3>}
+                      <div className="space-y-3">
+                        {group.phases.map((phase: any, idx: number) => {
                     const deps = phaseDeps[phase.id] ?? { predecessorDeps: [], successorDeps: [] };
                     const hasDeps = deps.predecessorDeps.length > 0 || deps.successorDeps.length > 0;
 
@@ -1669,6 +1706,22 @@ export default function JobDetailPage() {
                               />
                             </div>
                             <div className="sm:col-span-3">
+                              <label className="block text-xs font-medium text-gray-600 mb-1">Category <span className="text-gray-400">(optional)</span></label>
+                              <input
+                                type="text"
+                                value={phaseEditCategory}
+                                onChange={(e) => setPhaseEditCategory(e.target.value)}
+                                list="categories-list-edit"
+                                placeholder="Choose or type custom..."
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                              <datalist id="categories-list-edit">
+                                {PREDEFINED_CATEGORIES.map((cat) => (
+                                  <option key={cat} value={cat} />
+                                ))}
+                              </datalist>
+                            </div>
+                            <div className="sm:col-span-3">
                               <label className="block text-xs font-medium text-gray-600 mb-1">Depends On (phase that must finish first)</label>
                               <select
                                 value={phaseEditDependsOn}
@@ -1763,6 +1816,9 @@ export default function JobDetailPage() {
                     </div>
                     );
                   })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -1776,6 +1832,22 @@ export default function JobDetailPage() {
                 <input type="text" value={newPhaseDesc} onChange={(e) => setNewPhaseDesc(e.target.value)}
                   placeholder="Description (optional)"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Category <span className="text-gray-400">(optional)</span></label>
+                  <input
+                    type="text"
+                    value={newPhaseCategory}
+                    onChange={(e) => setNewPhaseCategory(e.target.value)}
+                    list="categories-list"
+                    placeholder="Choose or type custom..."
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <datalist id="categories-list">
+                    {PREDEFINED_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat} />
+                    ))}
+                  </datalist>
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-600 mb-1">Start Date <span className="text-gray-400">(optional)</span></label>
