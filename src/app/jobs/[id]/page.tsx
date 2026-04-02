@@ -711,12 +711,12 @@ export default function JobDetailPage() {
         });
       } else {
         // No dependents — just save directly
-        await commitPhaseDates(phase.id, phaseEditStart, phaseEditEnd);
-        // Also update dependsOn and category
+        await commitPhaseDates(phase.id, phaseEditStart, phaseEditEnd, phaseEditCategory);
+        // Also update dependsOn
         await fetch(`/api/jobs/${jobId}/phases`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phaseId: phase.id, dependsOnId: phaseEditDependsOn, category: phaseEditCategory || null }),
+          body: JSON.stringify({ phaseId: phase.id, dependsOnId: phaseEditDependsOn }),
         });
         setEditingPhaseId(null);
         fetchJob();
@@ -726,7 +726,7 @@ export default function JobDetailPage() {
     }
   };
 
-  const commitPhaseDates = async (phaseId: string, startDate: string, endDate: string) => {
+  const commitPhaseDates = async (phaseId: string, startDate: string, endDate: string, category?: string) => {
     // Use both the old move endpoint (for old dependsOnId cascade) and new PATCH endpoint (for PhaseDependency cascade)
     await fetch(`/api/jobs/${jobId}/phases/${phaseId}/move`, {
       method: "POST",
@@ -737,7 +737,7 @@ export default function JobDetailPage() {
     const res = await fetch(`/api/phases/${phaseId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ startDate, endDate }),
+      body: JSON.stringify({ startDate, endDate, category: category !== undefined ? (category || null) : undefined }),
     });
     if (res.ok) {
       const data = await res.json();
@@ -751,7 +751,7 @@ export default function JobDetailPage() {
   const confirmCascade = async () => {
     if (!cascadeModal) return;
     setSavingPhase(true);
-    await commitPhaseDates(cascadeModal.phaseId, cascadeModal.newStartDate, cascadeModal.newEndDate);
+    await commitPhaseDates(cascadeModal.phaseId, cascadeModal.newStartDate, cascadeModal.newEndDate, phaseEditCategory);
     // Also update dependsOn
     await fetch(`/api/jobs/${jobId}/phases`, {
       method: "PUT",

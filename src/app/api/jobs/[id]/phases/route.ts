@@ -50,7 +50,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  const { name, description } = body;
+  const { name, description, category } = body;
 
   if (!name) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -66,6 +66,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     data: {
       name,
       description: description || null,
+      category: category || null,
       orderIndex: (maxPhase?.orderIndex ?? -1) + 1,
       jobId: params.id,
     },
@@ -79,7 +80,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  const { phaseId, name, description, orderIndex, startDate, endDate, dependsOnId } = body;
+  const { phaseId, name, description, orderIndex, startDate, endDate, dependsOnId, category } = body;
 
   if (!phaseId) {
     return NextResponse.json({ error: "phaseId is required" }, { status: 400 });
@@ -100,6 +101,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       ...(startDate !== undefined && { startDate: startDate ? new Date(startDate) : null }),
       ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
       ...(dependsOnId !== undefined && { dependsOnId: dependsOnId || null }),
+      ...(category !== undefined && { category: category || null }),
     },
   });
 

@@ -36,7 +36,7 @@ export async function PATCH(
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  const { name, description, startDate, endDate, orderIndex, completion } = body;
+  const { name, description, startDate, endDate, orderIndex, completion, category } = body;
 
   const existing = await prisma.phase.findUnique({ where: { id: params.id } });
   if (!existing) return NextResponse.json({ error: "Phase not found" }, { status: 404 });
@@ -57,6 +57,7 @@ export async function PATCH(
       ...(orderIndex !== undefined && { orderIndex }),
       ...(startDate !== undefined && { startDate: newStart }),
       ...(endDate !== undefined && { endDate: newEnd }),
+      ...(category !== undefined && { category: category || null }),
     },
   });
 
