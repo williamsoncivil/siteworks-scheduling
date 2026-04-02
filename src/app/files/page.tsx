@@ -29,7 +29,7 @@ interface Phase {
   name: string;
 }
 
-type CategoryFilter = "all" | "photo" | "document";
+type MediaType = "photos" | "files";
 type GroupBy = "none" | "phase";
 
 export default function FilesPage() {
@@ -39,9 +39,9 @@ export default function FilesPage() {
   const [phases, setPhases] = useState<Phase[]>([]);
   const [filterJob, setFilterJob] = useState("");
   const [filterPhase, setFilterPhase] = useState("");
-  const [filterCategory, setFilterCategory] = useState<CategoryFilter>("all");
+  const [mediaType, setMediaType] = useState<MediaType | null>(null);
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const lightboxRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -60,6 +60,14 @@ export default function FilesPage() {
       .then((d) => setJobs(d));
   }, []);
 
+  // Reset type, phase, and documents when job changes
+  const handleJobChange = (jobId: string) => {
+    setFilterJob(jobId);
+    setMediaType(null);
+    setFilterPhase("");
+    setDocuments([]);
+  };
+
   // Load phases when filter job changes
   useEffect(() => {
     setFilterPhase("");
@@ -69,6 +77,26 @@ export default function FilesPage() {
       .then((r) => r.json())
       .then((d) => setPhases(Array.isArray(d) ? d : []));
   }, [filterJob]);
+
+  // Fetch files only when BOTH job and media type are selected
+  useEffect(() => {
+    if (!filterJob || !mediaType) {
+      setDocuments([]);
+      return;
+    }
+    setLoading(true);
+    const params = new URLSearchParams();
+    params.set("jobId", filterJob);
+    if (filterPhase) params.set("phaseId", filterPhase);
+    // Filter by category based on mediaType
+    params.set("fileCategory", mediaType === "photos" ? "photo" : "document");
+    fetch(`/api/documents?${params.toString()}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setDocuments(d);
+        setLoading(false);
+      });
+  }, [filterJob, mediaType, filterPhase]);
 
   // Load phases for upload job picker
   useEffect(() => {
@@ -80,25 +108,12 @@ export default function FilesPage() {
       .then((d) => setUploadPhases(Array.isArray(d) ? d : []));
   }, [uploadJobId]);
 
-  useEffect(() => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (filterJob) params.set("jobId", filterJob);
-    if (filterPhase) params.set("phaseId", filterPhase);
-    if (filterCategory !== "all") params.set("fileCategory", filterCategory);
-    fetch(`/api/documents?${params.toString()}`)
-      .then((r) => r.json())
-      .then((d) => {
-        setDocuments(d);
-        setLoading(false);
-      });
-  }, [filterJob, filterPhase, filterCategory]);
-
   const refreshDocs = () => {
+    if (!filterJob || !mediaType) return;
     const params = new URLSearchParams();
-    if (filterJob) params.set("jobId", filterJob);
+    params.set("jobId", filterJob);
     if (filterPhase) params.set("phaseId", filterPhase);
-    if (filterCategory !== "all") params.set("fileCategory", filterCategory);
+    params.set("fileCategory", mediaType === "photos" ? "photo" : "document");
     fetch(`/api/documents?${params.toString()}`)
       .then((r) => r.json())
       .then((d) => setDocuments(d));
@@ -152,11 +167,9 @@ export default function FilesPage() {
     }
   };
 
-  const photos = documents.filter((d) => d.fileCategory === "photo");
-  const docs = documents.filter((d) => d.fileCategory === "document");
-
-  const displayedPhotos = filterCategory === "document" ? [] : photos;
-  const displayedDocs = filterCategory === "photo" ? [] : docs;
+  // All documents are already filtered by mediaType at fetch time
+  const displayedPhotos = mediaType === "photos" ? documents : [];
+  const displayedDocs = mediaType === "files" ? documents : [];
 
   // Lightbox keyboard navigation
   useEffect(() => {
@@ -346,69 +359,104 @@ export default function FilesPage() {
         )}
 
         {/* Filters */}
-        <div className="flex flex-col sm:flex-row gap-3 mb-6 flex-wrap">
-          {/* Category tabs */}
-          <div className="flex bg-gray-100 rounded-lg p-1">
-            {(["all", "photo", "document"] as CategoryFilter[]).map((cat) => (
-              <button
-                key={cat}
-                onClick={() => setFilterCategory(cat)}
-                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors capitalize ${
-                  filterCategory === cat
-                    ? "bg-white shadow-sm text-gray-900"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
-              >
-                {cat === "all" ? "All" : cat === "photo" ? "📷 Photos" : "📄 Documents"}
-              </button>
-            ))}
-          </div>
-
-          {/* Job filter */}
-          <select
-            value={filterJob}
-            onChange={(e) => setFilterJob(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-          >
-            <option value="">All Jobs</option>
-            {jobs.map((j) => (
-              <option key={j.id} value={j.id}>{j.name}</option>
-            ))}
-          </select>
-
-          {/* Phase filter — only shown when a job is selected */}
-          {filterJob && phases.length > 0 && (
+        <div className="mb-6 space-y-4">
+          {/* Step 1: Job Selection (Required) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Select a Job <span className="text-red-500">*</span>
+            </label>
             <select
-              value={filterPhase}
-              onChange={(e) => setFilterPhase(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              value={filterJob}
+              onChange={(e) => handleJobChange(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full sm:w-64"
             >
-              <option value="">All Phases</option>
-              {phases.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
+              <option value="">— Choose a job —</option>
+              {jobs.map((j) => (
+                <option key={j.id} value={j.id}>{j.name}</option>
               ))}
             </select>
+          </div>
+
+          {/* Step 2: Media Type Selection (Required if job selected) */}
+          {filterJob && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Media Type <span className="text-red-500">*</span>
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => setMediaType("photos")}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
+                    mediaType === "photos"
+                      ? "bg-blue-600 border-blue-600 text-white"
+                      : "bg-white border-gray-300 text-gray-700 hover:border-gray-400"
+                  }`}
+                >
+                  📷 Photos
+                </button>
+                <button
+                  onClick={() => setMediaType("files")}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border ${
+                    mediaType === "files"
+                      ? "bg-blue-600 border-blue-600 text-white"
+                      : "bg-white border-gray-300 text-gray-700 hover:border-gray-400"
+                  }`}
+                >
+                  📄 Files
+                </button>
+              </div>
+            </div>
           )}
 
-          {/* Group by phase toggle */}
-          {filterCategory !== "photo" && (
-            <button
-              onClick={() => setGroupBy(groupBy === "none" ? "phase" : "none")}
-              className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
-                groupBy === "phase"
-                  ? "bg-indigo-50 border-indigo-300 text-indigo-700"
-                  : "border-gray-300 text-gray-600 hover:bg-gray-50"
-              }`}
-            >
-              {groupBy === "phase" ? "✓ Grouped by Phase" : "Group by Phase"}
-            </button>
+          {/* Step 3: Phase Filter (Optional, only shown when job selected) */}
+          {filterJob && phases.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Filter by Phase <span className="text-gray-400">(optional)</span>
+              </label>
+              <select
+                value={filterPhase}
+                onChange={(e) => setFilterPhase(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full sm:w-64"
+              >
+                <option value="">— All phases —</option>
+                {phases.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Group by phase toggle — only shown for files */}
+          {mediaType === "files" && (
+            <div>
+              <button
+                onClick={() => setGroupBy(groupBy === "none" ? "phase" : "none")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  groupBy === "phase"
+                    ? "bg-indigo-50 border-indigo-300 text-indigo-700"
+                    : "border-gray-300 text-gray-600 hover:bg-gray-50"
+                }`}
+              >
+                {groupBy === "phase" ? "✓ Grouped by Phase" : "Group by Phase"}
+              </button>
+            </div>
           )}
         </div>
 
-        {loading ? (
+        {!filterJob || !mediaType ? (
+          <div className="text-gray-400 text-center py-12 bg-gray-50 rounded-lg border border-gray-200">
+            <p className="text-lg font-medium text-gray-500 mb-2">
+              {!filterJob ? "👈 Select a job above to get started" : "👈 Choose a media type (Photos or Files)"}
+            </p>
+            <p className="text-sm text-gray-400">
+              {!filterJob ? "Pick a job, then choose Photos or Files to view" : "Select either Photos or Files to view your media"}
+            </p>
+          </div>
+        ) : loading ? (
           <div className="text-gray-400 text-center py-12">Loading...</div>
         ) : documents.length === 0 ? (
-          <div className="text-gray-400 text-center py-12">No files found</div>
+          <div className="text-gray-400 text-center py-12">No {mediaType === "photos" ? "photos" : "files"} found</div>
         ) : (
           <div className="space-y-8">
             {/* Photos Section */}
