@@ -23,6 +23,7 @@ model User {
   supervisorEntries    ScheduleEntry[] @relation("Supervisor")
   messages             Message[]
   documents            Document[]
+  phasesLed           Phase[]
   messagesLastReadAt      DateTime?
   emailNotificationLevel  EmailNotificationLevel @default(ALL)
   mentions                MessageMention[]
@@ -57,6 +58,8 @@ model Phase {
   dependsOnId     String?
   completion      Int               @default(0)
   category        String?
+  phaseLeadId     String?
+  phaseLead       User?             @relation(fields: [phaseLeadId], references: [id], onDelete: SetNull)
   dependsOn       Phase?            @relation("PhaseDeps", fields: [dependsOnId], references: [id])
   dependents      Phase[]           @relation("PhaseDeps")
   predecessorDeps PhaseDependency[] @relation("PredecessorDeps")

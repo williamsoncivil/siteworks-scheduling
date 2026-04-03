@@ -178,6 +178,8 @@ interface Phase {
   dependsOnId: string | null;
   completion: number;
   category: string | null;
+  phaseLeadId: string | null;
+  phaseLead?: { id: string; name: string } | null;
   predecessorDeps?: PhaseDependency[];
   successorDeps?: PhaseDependency[];
 }
@@ -339,6 +341,7 @@ export default function JobDetailPage() {
   const [phaseEditDuration, setPhaseEditDuration] = useState<number | "">("");
   const [phaseEditDependsOn, setPhaseEditDependsOn] = useState("");
   const [phaseEditCategory, setPhaseEditCategory] = useState("");
+  const [phaseEditLeadId, setPhaseEditLeadId] = useState("");
   const [cascadeModal, setCascadeModal] = useState<CascadeModal | null>(null);
   const [savingPhase, setSavingPhase] = useState(false);
 
@@ -722,6 +725,7 @@ export default function JobDetailPage() {
     setPhaseEditDuration(durationFromDates(start, end) ?? "");
     setPhaseEditDependsOn(phase.dependsOnId || "");
     setPhaseEditCategory(phase.category || "");
+    setPhaseEditLeadId(phase.phaseLeadId || "");
   };
 
   const savePhaseDates = async (phase: Phase) => {
@@ -751,12 +755,12 @@ export default function JobDetailPage() {
         });
       } else {
         // No dependents — just save directly
-        await commitPhaseDates(phase.id, phaseEditStart, phaseEditEnd, phaseEditCategory);
-        // Also update dependsOn
+        await commitPhaseDates(phase.id, phaseEditStart, phaseEditEnd, phaseEditCategory, phaseEditLeadId);
+        // Also update dependsOn and phaseLeadId
         await fetch(`/api/jobs/${jobId}/phases`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phaseId: phase.id, dependsOnId: phaseEditDependsOn }),
+          body: JSON.stringify({ phaseId: phase.id, dependsOnId: phaseEditDependsOn, phaseLeadId: phaseEditLeadId || null }),
         });
         setEditingPhaseId(null);
         fetchJob();
@@ -766,7 +770,7 @@ export default function JobDetailPage() {
     }
   };
 
-  const commitPhaseDates = async (phaseId: string, startDate: string, endDate: string, category?: string) => {
+  const commitPhaseDates = async (phaseId: string, startDate: string, endDate: string, category?: string, phaseLeadId?: string) => {
     // Use both the old move endpoint (for old dependsOnId cascade) and new PATCH endpoint (for PhaseDependency cascade)
     await fetch(`/api/jobs/${jobId}/phases/${phaseId}/move`, {
       method: "POST",
@@ -777,7 +781,12 @@ export default function JobDetailPage() {
     const res = await fetch(`/api/phases/${phaseId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ startDate, endDate, category: category !== undefined ? (category || null) : undefined }),
+      body: JSON.stringify({ 
+        startDate, 
+        endDate, 
+        category: category !== undefined ? (category || null) : undefined,
+        phaseLeadId: phaseLeadId !== undefined ? (phaseLeadId || null) : undefined,
+      }),
     });
     if (res.ok) {
       const data = await res.json();
@@ -791,12 +800,12 @@ export default function JobDetailPage() {
   const confirmCascade = async () => {
     if (!cascadeModal) return;
     setSavingPhase(true);
-    await commitPhaseDates(cascadeModal.phaseId, cascadeModal.newStartDate, cascadeModal.newEndDate, phaseEditCategory);
-    // Also update dependsOn
+    await commitPhaseDates(cascadeModal.phaseId, cascadeModal.newStartDate, cascadeModal.newEndDate, phaseEditCategory, phaseEditLeadId);
+    // Also update dependsOn and phaseLeadId
     await fetch(`/api/jobs/${jobId}/phases`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ phaseId: cascadeModal.phaseId, dependsOnId: phaseEditDependsOn }),
+      body: JSON.stringify({ phaseId: cascadeModal.phaseId, dependsOnId: phaseEditDependsOn, phaseLeadId: phaseEditLeadId || null }),
     });
     setCascadeModal(null);
     setEditingPhaseId(null);
@@ -1769,6 +1778,19 @@ export default function JobDetailPage() {
                                   <option key={cat} value={cat} />
                                 ))}
                               </datalist>
+                            </div>
+                            <div className="sm:col-span-3">
+                              <label className="block text-xs font-medium text-gray-600 mb-1">Phase Lead <span className="text-gray-400">(optional)</span></label>
+                              <select
+                                value={phaseEditLeadId}
+                                onChange={(e) => setPhaseEditLeadId(e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              >
+                                <option value="">— No lead —</option>
+                                {users.map((u) => (
+                                  <option key={u.id} value={u.id}>{u.name}</option>
+                                ))}
+                              </select>
                             </div>
                             <div className="sm:col-span-3">
                               <label className="block text-xs font-medium text-gray-600 mb-1">Depends On (phase that must finish first)</label>

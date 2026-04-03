@@ -80,7 +80,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json();
-  const { phaseId, name, description, orderIndex, startDate, endDate, dependsOnId, category } = body;
+  const { phaseId, name, description, orderIndex, startDate, endDate, dependsOnId, category, phaseLeadId } = body;
 
   if (!phaseId) {
     return NextResponse.json({ error: "phaseId is required" }, { status: 400 });
@@ -102,6 +102,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
       ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
       ...(dependsOnId !== undefined && { dependsOnId: dependsOnId || null }),
       ...(category !== undefined && { category: category || null }),
+      ...(phaseLeadId !== undefined && { phaseLeadId: phaseLeadId || null }),
     },
   });
 
