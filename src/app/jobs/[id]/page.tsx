@@ -289,6 +289,9 @@ export default function JobDetailPage() {
   const [newPhasePredecessorId, setNewPhasePredecessorId] = useState("");
   const [newPhaseCategory, setNewPhaseCategory] = useState("");
   const [viewPhaseBy, setViewPhaseBy] = useState<"category" | "date">("category");
+  const [selectedPhaseIds, setSelectedPhaseIds] = useState<Set<string>>(new Set());
+  const [bulkCategory, setBulkCategory] = useState("");
+  const [applyingBulk, setApplyingBulk] = useState(false);
   const [editingPhaseId, setEditingPhaseId] = useState<string | null>(null);
   const [editingPhaseNameId, setEditingPhaseNameId] = useState<string | null>(null);
   const [phaseNameInputValue, setPhaseNameInputValue] = useState("");
@@ -648,6 +651,43 @@ export default function JobDetailPage() {
     if (!confirm("Delete this phase?")) return;
     await fetch(`/api/jobs/${jobId}/phases?phaseId=${phaseId}`, { method: "DELETE" });
     fetchJob();
+  };
+
+  const togglePhaseSelect = (phaseId: string) => {
+    setSelectedPhaseIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(phaseId)) {
+        next.delete(phaseId);
+      } else {
+        next.add(phaseId);
+      }
+      return next;
+    });
+  };
+
+  const bulkApplyCategory = async () => {
+    if (selectedPhaseIds.size === 0 || !bulkCategory.trim()) return;
+    setApplyingBulk(true);
+    try {
+      await Promise.all(
+        Array.from(selectedPhaseIds).map((phaseId) =>
+          fetch(`/api/phases/${phaseId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ category: bulkCategory || null }),
+          })
+        )
+      );
+      setSelectedPhaseIds(new Set());
+      setBulkCategory("");
+      fetchJob();
+    } finally {
+      setApplyingBulk(false);
+    }
+  };
+
+  const clearSelection = () => {
+    setSelectedPhaseIds(new Set());
   };
 
   const movePhase = async (phase: Phase, direction: "up" | "down", phases: Phase[]) => {
@@ -1470,9 +1510,15 @@ export default function JobDetailPage() {
                     <div key={phase.id} className={`border rounded-xl overflow-hidden ${isComplete ? "border-green-400" : isBlocked ? "border-amber-300" : "border-gray-200"}`}>
                       {/* Phase header */}
                       <div
-                        className={`flex items-start gap-3 p-3 cursor-pointer select-none transition-colors ${isComplete ? "bg-green-50 hover:bg-green-100" : isBlocked ? "bg-amber-50 hover:bg-amber-100" : "bg-gray-50 hover:bg-gray-100"}`}
-                        onClick={() => togglePhaseExpand(phase.id)}
+                        className={`flex items-start gap-3 p-3 select-none transition-colors ${isComplete ? "bg-green-50 hover:bg-green-100" : isBlocked ? "bg-amber-50 hover:bg-amber-100" : "bg-gray-50 hover:bg-gray-100"}`}
                       >
+                        <input
+                          type="checkbox"
+                          checked={selectedPhaseIds.has(phase.id)}
+                          onChange={() => togglePhaseSelect(phase.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="mt-1 cursor-pointer"
+                        />
                         <div className="flex flex-col gap-0.5">
                           <button onClick={() => movePhase(phase, "up", phases)} disabled={idx === 0}
                             className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-30 leading-none">▲</button>
@@ -1480,7 +1526,10 @@ export default function JobDetailPage() {
                             className="text-xs text-gray-400 hover:text-gray-600 disabled:opacity-30 leading-none">▼</button>
                         </div>
                         <span className="text-xs text-gray-400 w-5 text-center">{idx + 1}</span>
-                        <div className="flex-1 min-w-0">
+                        <div
+                          className="flex-1 min-w-0 cursor-pointer"
+                          onClick={() => togglePhaseExpand(phase.id)}
+                        >
                           <div className="flex items-center gap-1.5 flex-wrap group/phasename">
                             {editingPhaseNameId === phase.id ? (
                               <input
@@ -1822,6 +1871,44 @@ export default function JobDetailPage() {
                 </div>
               )}
             </div>
+
+            {selectedPhaseIds.size > 0 && (
+              <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <span className="text-sm font-semibold text-indigo-700">
+                    {selectedPhaseIds.size} phase{selectedPhaseIds.size !== 1 ? "s" : ""} selected
+                  </span>
+                  <div className="flex gap-2 items-center flex-wrap">
+                    <input
+                      type="text"
+                      value={bulkCategory}
+                      onChange={(e) => setBulkCategory(e.target.value)}
+                      list="bulk-categories-list"
+                      placeholder="Category..."
+                      className="border border-indigo-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <datalist id="bulk-categories-list">
+                      {PREDEFINED_CATEGORIES.map((cat) => (
+                        <option key={cat} value={cat} />
+                      ))}
+                    </datalist>
+                    <button
+                      onClick={bulkApplyCategory}
+                      disabled={applyingBulk || !bulkCategory.trim()}
+                      className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                    >
+                      {applyingBulk ? "Applying..." : "Apply"}
+                    </button>
+                    <button
+                      onClick={clearSelection}
+                      className="bg-white border border-indigo-300 text-indigo-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-50"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="bg-white rounded-xl shadow-sm p-6">
               <h3 className="font-semibold text-gray-900 mb-4">Add Phase</h3>
