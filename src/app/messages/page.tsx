@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import Layout from "@/components/Layout";
 import { format, parseISO } from "date-fns";
+import { sortPhasesByCategory } from "@/lib/categories";
 
 interface MentionedUser { id: string; name: string; }
 interface Message {
@@ -11,12 +12,12 @@ interface Message {
   createdAt: string;
   author: { id: string; name: string; role: string };
   job: { id: string; name: string; color: string };
-  phase: { id: string; name: string } | null;
+  phase: { id: string; name: string; category?: string | null } | null;
   mentions: { user: MentionedUser }[];
 }
 
 interface Job { id: string; name: string; color: string; }
-interface Phase { id: string; name: string; }
+interface Phase { id: string; name: string; category?: string | null; }
 interface User { id: string; name: string; }
 
 export default function MessagesPage() {
@@ -32,6 +33,7 @@ export default function MessagesPage() {
   const [content, setContent] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [groupByCategory, setGroupByCategory] = useState(false);
 
   // @mention autocomplete
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -142,12 +144,31 @@ export default function MessagesPage() {
     return <>{parts}</>;
   };
 
-  const grouped = messages.reduce<Record<string, Message[]>>((acc, m) => {
-    const day = format(parseISO(m.createdAt), "MMMM d, yyyy");
-    if (!acc[day]) acc[day] = [];
-    acc[day].push(m);
-    return acc;
-  }, {});
+  // Group messages based on toggle
+  const getGroupedMessages = () => {
+    if (!groupByCategory) {
+      // Group by day (original behavior)
+      return messages.reduce<Record<string, Message[]>>((acc, m) => {
+        const day = format(parseISO(m.createdAt), "MMMM d, yyyy");
+        if (!acc[day]) acc[day] = [];
+        acc[day].push(m);
+        return acc;
+      }, {});
+    }
+
+    // Group by category, then by day
+    const byCategory: Record<string, Record<string, Message[]>> = {};
+    for (const m of messages) {
+      const category = m.phase?.category || "Uncategorized";
+      const day = format(parseISO(m.createdAt), "MMMM d, yyyy");
+      if (!byCategory[category]) byCategory[category] = {};
+      if (!byCategory[category][day]) byCategory[category][day] = [];
+      byCategory[category][day].push(m);
+    }
+    return byCategory;
+  };
+
+  const grouped = getGroupedMessages();
 
   return (
     <Layout>
@@ -160,7 +181,7 @@ export default function MessagesPage() {
               Type <span className="font-mono bg-blue-50 border border-blue-200 text-blue-700 px-1.5 py-0.5 rounded text-xs font-semibold">@Name</span> <span className="text-gray-400">to notify someone</span>
             </p>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap items-center">
             <select value={filterJobId} onChange={(e) => setFilterJobId(e.target.value)}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
               <option value="">All Jobs</option>
@@ -170,8 +191,26 @@ export default function MessagesPage() {
               <select value={filterPhaseId} onChange={(e) => setFilterPhaseId(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                 <option value="">All Phases</option>
-                {phases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {sortPhasesByCategory(phases).map((group: any) => (
+                  <optgroup key={group.category} label={group.category}>
+                    {group.phases.map((p: Phase) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
+            )}
+            {messages.length > 0 && (
+              <button
+                onClick={() => setGroupByCategory(!groupByCategory)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  groupByCategory
+                    ? "bg-indigo-600 text-white"
+                    : "border border-gray-300 text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                {groupByCategory ? "✓ By Category" : "By Date"}
+              </button>
             )}
           </div>
         </div>
@@ -185,40 +224,86 @@ export default function MessagesPage() {
               No messages yet{filterJobId ? " for this filter" : ""} — send one below
             </div>
           ) : (
-            Object.entries(grouped).map(([day, msgs]) => (
-              <div key={day}>
-                <div className="flex items-center gap-3 my-4">
-                  <div className="flex-1 h-px bg-gray-100" />
-                  <span className="text-xs text-gray-400 font-medium">{day}</span>
-                  <div className="flex-1 h-px bg-gray-100" />
-                </div>
-                {msgs.map((msg) => (
-                  <div key={msg.id} className="flex gap-3 py-2 hover:bg-gray-50 rounded-lg px-2 transition-colors">
-                    <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-white text-xs font-bold"
-                      style={{ backgroundColor: msg.job.color }}>
-                      {msg.author.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-baseline gap-2 flex-wrap">
-                        <span className="text-sm font-semibold text-gray-900">{msg.author.name}</span>
-                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full text-white" style={{ backgroundColor: msg.job.color }}>
-                          {msg.job.name}
-                        </span>
-                        {msg.phase && (
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
-                            {msg.phase.name}
-                          </span>
-                        )}
-                        <span className="text-xs text-gray-400">{format(parseISO(msg.createdAt), "h:mm a")}</span>
+            <>
+              {groupByCategory ? (
+                // Grouped by category
+                Object.entries(grouped as Record<string, Record<string, Message[]>>).map(([category, dayGroups]) => (
+                  <div key={category}>
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3 px-2 py-1 bg-indigo-50 rounded-lg">{category}</h3>
+                    {Object.entries(dayGroups).map(([day, msgs]) => (
+                      <div key={day}>
+                        <div className="flex items-center gap-3 my-3">
+                          <div className="flex-1 h-px bg-gray-100" />
+                          <span className="text-xs text-gray-400 font-medium">{day}</span>
+                          <div className="flex-1 h-px bg-gray-100" />
+                        </div>
+                        {msgs.map((msg) => (
+                          <div key={msg.id} className="flex gap-3 py-2 hover:bg-gray-50 rounded-lg px-2 transition-colors">
+                            <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-white text-xs font-bold"
+                              style={{ backgroundColor: msg.job.color }}>
+                              {msg.author.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-baseline gap-2 flex-wrap">
+                                <span className="text-sm font-semibold text-gray-900">{msg.author.name}</span>
+                                <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full text-white" style={{ backgroundColor: msg.job.color }}>
+                                  {msg.job.name}
+                                </span>
+                                {msg.phase && (
+                                  <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                                    {msg.phase.name}
+                                  </span>
+                                )}
+                                <span className="text-xs text-gray-400">{format(parseISO(msg.createdAt), "h:mm a")}</span>
+                              </div>
+                              <p className="text-sm text-gray-700 mt-0.5">
+                                {renderContent(msg.content, msg.mentions)}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                      <p className="text-sm text-gray-700 mt-0.5">
-                        {renderContent(msg.content, msg.mentions)}
-                      </p>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            ))
+                ))
+              ) : (
+                // Grouped by day (original)
+                Object.entries(grouped as Record<string, Message[]>).map(([day, msgs]) => (
+                  <div key={day}>
+                    <div className="flex items-center gap-3 my-4">
+                      <div className="flex-1 h-px bg-gray-100" />
+                      <span className="text-xs text-gray-400 font-medium">{day}</span>
+                      <div className="flex-1 h-px bg-gray-100" />
+                    </div>
+                    {msgs.map((msg) => (
+                      <div key={msg.id} className="flex gap-3 py-2 hover:bg-gray-50 rounded-lg px-2 transition-colors">
+                        <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-white text-xs font-bold"
+                          style={{ backgroundColor: msg.job.color }}>
+                          {msg.author.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-baseline gap-2 flex-wrap">
+                            <span className="text-sm font-semibold text-gray-900">{msg.author.name}</span>
+                            <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full text-white" style={{ backgroundColor: msg.job.color }}>
+                              {msg.job.name}
+                            </span>
+                            {msg.phase && (
+                              <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                                {msg.phase.name}
+                              </span>
+                            )}
+                            <span className="text-xs text-gray-400">{format(parseISO(msg.createdAt), "h:mm a")}</span>
+                          </div>
+                          <p className="text-sm text-gray-700 mt-0.5">
+                            {renderContent(msg.content, msg.mentions)}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
+            </>
           )}
           <div ref={bottomRef} />
         </div>
@@ -252,7 +337,13 @@ export default function MessagesPage() {
                 <select value={newPhaseId} onChange={(e) => setNewPhaseId(e.target.value)}
                   className="flex-1 min-w-32 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
                   <option value="">No specific phase</option>
-                  {newPhases.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  {sortPhasesByCategory(newPhases).map((group: any) => (
+                    <optgroup key={group.category} label={group.category}>
+                      {group.phases.map((p: Phase) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </optgroup>
+                  ))}
                 </select>
               )}
             </div>
