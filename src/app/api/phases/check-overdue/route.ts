@@ -32,6 +32,12 @@ export async function POST(req: NextRequest) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // Skip weekends (0 = Sunday, 6 = Saturday)
+  const dayOfWeek = today.getDay();
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return NextResponse.json({ success: true, skipped: "weekend", daysChecked: 0 });
+  }
+
   // Find all overdue phases in active jobs
   const overduePhases = await prisma.phase.findMany({
     where: {
