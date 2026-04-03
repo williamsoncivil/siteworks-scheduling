@@ -5,6 +5,7 @@ import Layout from "@/components/Layout";
 import { format, parseISO } from "date-fns";
 import { upload } from "@vercel/blob/client";
 import { useSession } from "next-auth/react";
+import { sortPhasesByCategory } from "@/lib/categories";
 
 interface Document {
   id: string;
@@ -27,6 +28,9 @@ interface Job {
 interface Phase {
   id: string;
   name: string;
+  category?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
 }
 
 type MediaType = "photos" | "files";
@@ -334,8 +338,12 @@ export default function FilesPage() {
                     className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-44"
                   >
                     <option value="">— No phase —</option>
-                    {uploadPhases.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
+                    {sortPhasesByCategory(uploadPhases).map((group: any) => (
+                      <optgroup key={group.category} label={group.category}>
+                        {group.phases.map((p: Phase) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </div>
@@ -420,8 +428,12 @@ export default function FilesPage() {
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full sm:w-64"
               >
                 <option value="">— All phases —</option>
-                {phases.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                {sortPhasesByCategory(phases).map((group: any) => (
+                  <optgroup key={group.category} label={group.category}>
+                    {group.phases.map((p: Phase) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
             </div>
