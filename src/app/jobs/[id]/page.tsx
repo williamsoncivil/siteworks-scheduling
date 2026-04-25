@@ -299,9 +299,12 @@ export default function JobDetailPage() {
   const [editingPhaseNameId, setEditingPhaseNameId] = useState<string | null>(null);
   const [phaseNameInputValue, setPhaseNameInputValue] = useState("");
   const [expandedPhaseIds, setExpandedPhaseIds] = useState<Set<string>>(new Set());
-  const [phaseMessages, setPhaseMessages] = useState<Record<string, { id: string; content: string; createdAt: string; author: { name: string } }[]>>({});
+  const [phaseMessages, setPhaseMessages] = useState<Record<string, { id: string; content: string; createdAt: string; author: { id: string; name: string }; mentions: { user: { id: string; name: string } }[] }[]>>({});
   const [phaseMessageInput, setPhaseMessageInput] = useState<Record<string, string>>({});
   const [phaseMessageSending, setPhaseMessageSending] = useState<string | null>(null);
+  const [phaseMentionQuery, setPhaseMentionQuery] = useState<Record<string, string | null>>({});
+  const [phaseMentionStart, setPhaseMentionStart] = useState<Record<string, number>>({});
+  const phaseInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const fetchPhaseMessages = async (phaseId: string) => {
     const res = await fetch(`/api/messages?jobId=${jobId}&phaseId=${phaseId}`);
     if (res.ok) {
@@ -315,9 +318,39 @@ export default function JobDetailPage() {
     setPhaseMessageSending(phaseId);
     await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, jobId, phaseId }) });
     setPhaseMessageInput((prev) => ({ ...prev, [phaseId]: "" }));
+    setPhaseMentionQuery((prev) => ({ ...prev, [phaseId]: null }));
     await fetchPhaseMessages(phaseId);
     setPhaseMessageSending(null);
   };
+
+  const handlePhaseInputChange = (phaseId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setPhaseMessageInput((prev) => ({ ...prev, [phaseId]: val }));
+    const cursor = e.currentTarget.selectionStart ?? val.length;
+    const before = val.slice(0, cursor);
+    const atIdx = before.lastIndexOf("@");
+    if (atIdx >= 0) {
+      const after = before.slice(atIdx + 1);
+      if (!after.includes(" ") || after.split(" ").length <= 2) {
+        setPhaseMentionQuery((prev) => ({ ...prev, [phaseId]: after.toLowerCase() }));
+        setPhaseMentionStart((prev) => ({ ...prev, [phaseId]: atIdx }));
+        return;
+      }
+    }
+    setPhaseMentionQuery((prev) => ({ ...prev, [phaseId]: null }));
+  };
+
+  const insertPhaseMention = (phaseId: string, user: User) => {
+    const input = phaseMessageInput[phaseId] ?? "";
+    const start = phaseMentionStart[phaseId] ?? 0;
+    const query = phaseMentionQuery[phaseId] ?? "";
+    const before = input.slice(0, start);
+    const after = input.slice(start + 1 + query.length);
+    setPhaseMessageInput((prev) => ({ ...prev, [phaseId]: `${before}@${user.name}${after} ` }));
+    setPhaseMentionQuery((prev) => ({ ...prev, [phaseId]: null }));
+    setTimeout(() => phaseInputRefs.current[phaseId]?.focus(), 0);
+  };
+
   const savePhaseNameEdit = async (phaseId: string) => {
     const newName = phaseNameInputValue.trim();
     setEditingPhaseNameId(null);
@@ -1899,42 +1932,83 @@ export default function JobDetailPage() {
                       {/* Phase Messages */}
                       <div className="border-t border-gray-100">
                         <div className="px-4 py-2 bg-gray-50">
-                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Phase Notes</p>
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Phase Messages</p>
                         </div>
                         <div className="px-4 py-2 max-h-40 overflow-y-auto space-y-2">
                           {(phaseMessages[phase.id] ?? []).length === 0 ? (
-                            <p className="text-xs text-gray-400 italic">No notes yet</p>
+                            <p className="text-xs text-gray-400 italic">No messages yet</p>
                           ) : (
-                            (phaseMessages[phase.id] ?? []).map((msg) => (
-                              <div key={msg.id} className="flex gap-2">
-                                <div className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-xs flex items-center justify-center font-semibold shrink-0 mt-0.5">
-                                  {msg.author.name.charAt(0).toUpperCase()}
+                            (phaseMessages[phase.id] ?? []).map((msg) => {
+                              const mentions = msg.mentions ?? [];
+                              let content = msg.content;
+                              let parts: React.ReactNode[] = [];
+                              let remaining = content;
+                              let key = 0;
+                              
+                              for (const { user } of mentions) {
+                                const tag = `@${user.name}`;
+                                const idx = remaining.indexOf(tag);
+                                if (idx >= 0) {
+                                  if (idx > 0) parts.push(<span key={key++}>{remaining.slice(0, idx)}</span>);
+                                  parts.push(
+                                    <span key={key++} className="bg-blue-100 text-blue-700 font-semibold rounded px-0.5">
+                                      {tag}
+                                    </span>
+                                  );
+                                  remaining = remaining.slice(idx + tag.length);
+                                }
+                              }
+                              if (remaining) parts.push(<span key={key++}>{remaining}</span>);
+                              
+                              return (
+                                <div key={msg.id} className="flex gap-2">
+                                  <div className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-xs flex items-center justify-center font-semibold shrink-0 mt-0.5">
+                                    {msg.author.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <span className="text-xs font-medium text-gray-700">{msg.author.name}</span>
+                                    <span className="text-xs text-gray-400 ml-1">{new Date(msg.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                                    <p className="text-xs text-gray-600 mt-0.5">{parts.length > 0 ? parts : msg.content}</p>
+                                  </div>
                                 </div>
-                                <div>
-                                  <span className="text-xs font-medium text-gray-700">{msg.author.name}</span>
-                                  <span className="text-xs text-gray-400 ml-1">{new Date(msg.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-                                  <p className="text-xs text-gray-600 mt-0.5">{msg.content}</p>
-                                </div>
-                              </div>
-                            ))
+                              );
+                            })
                           )}
                         </div>
-                        <div className="px-4 py-2 border-t border-gray-100 flex gap-2" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="text"
-                            value={phaseMessageInput[phase.id] ?? ""}
-                            onChange={(e) => setPhaseMessageInput((prev) => ({ ...prev, [phase.id]: e.target.value }))}
-                            onKeyDown={(e) => { if (e.key === "Enter") sendPhaseMessage(phase.id); }}
-                            placeholder="Add a note…"
-                            className="flex-1 text-xs border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          />
-                          <button
-                            onClick={() => sendPhaseMessage(phase.id)}
-                            disabled={phaseMessageSending === phase.id || !(phaseMessageInput[phase.id] ?? "").trim()}
-                            className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-40"
-                          >
-                            {phaseMessageSending === phase.id ? "…" : "Send"}
-                          </button>
+                        <div className="px-4 py-2 border-t border-gray-100 relative" onClick={(e) => e.stopPropagation()}>
+                          {/* @mention dropdown */}
+                          {(phaseMentionQuery[phase.id] ?? "") && users.filter((u) => u.name.toLowerCase().startsWith(phaseMentionQuery[phase.id] || "")).length > 0 && (
+                            <div className="absolute bottom-full left-4 right-4 mb-1 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden z-20 max-h-40 overflow-y-auto">
+                              <p className="text-xs text-gray-400 px-3 py-2 border-b border-gray-100">Mention someone</p>
+                              {users.filter((u) => u.name.toLowerCase().startsWith(phaseMentionQuery[phase.id] || "")).map((u) => (
+                                <button key={u.id} type="button" onMouseDown={(e) => { e.preventDefault(); insertPhaseMention(phase.id, u); }}
+                                  className="w-full text-left px-3 py-2 text-xs text-gray-800 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2">
+                                  <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center shrink-0">
+                                    {u.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                                  </span>
+                                  {u.name}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <input
+                              ref={(el) => { if (el) phaseInputRefs.current[phase.id] = el; }}
+                              type="text"
+                              value={phaseMessageInput[phase.id] ?? ""}
+                              onChange={(e) => handlePhaseInputChange(phase.id, e)}
+                              onKeyDown={(e) => { if (e.key === "Escape") setPhaseMentionQuery((prev) => ({ ...prev, [phase.id]: null })); if (e.key === "Enter" && !e.shiftKey && !users.filter((u) => u.name.toLowerCase().startsWith(phaseMentionQuery[phase.id] || "")).length) { sendPhaseMessage(phase.id); } }}
+                              placeholder="Type a message… use @Name to notify someone"
+                              className="flex-1 text-xs border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            <button
+                              onClick={() => sendPhaseMessage(phase.id)}
+                              disabled={phaseMessageSending === phase.id || !(phaseMessageInput[phase.id] ?? "").trim()}
+                              className="text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-40"
+                            >
+                              {phaseMessageSending === phase.id ? "…" : "Send"}
+                            </button>
+                          </div>
                         </div>
                       </div>
 
