@@ -124,8 +124,13 @@ src/
 
 ### User
 - `id`, `name`, `email`, `passwordHash`, `role` (ADMIN/EMPLOYEE/SUBCONTRACTOR)
-- `emailNotifications: Boolean` — toggle for @mention emails
+- `emailNotificationLevel: EmailNotificationLevel` — NONE/MENTIONS/ALL email pref
+- `pushNotificationLevel: PushNotificationLevel` — NONE/MENTIONS/ALL push pref
 - Default admin: `tom@williamsoncivil.com` / `admin123`
+
+### PushSubscription
+- `id`, `userId`, `endpoint`, `p256dh`, `auth`, `createdAt`
+- One user can have multiple subscriptions (multiple devices/browsers)
 
 ### Job
 - `id`, `name`, `address`, `description`, `status` (ACTIVE/COMPLETED/ARCHIVED), `color`
@@ -216,6 +221,7 @@ In `jobs/[id]/page.tsx`:
 - [x] Import from Buildertrend (via scripts/)
 - [x] Role-based access (ADMIN sees extra controls)
 - [x] Resend email integration for @mentions
+- [x] Push notifications (web-push, VAPID, per-user NONE/MENTIONS/ALL setting)
 
 ---
 
