@@ -308,6 +308,9 @@ export default function JobDetailPage() {
   const [editingPhaseNameId, setEditingPhaseNameId] = useState<string | null>(null);
   const [phaseNameInputValue, setPhaseNameInputValue] = useState("");
   const [expandedPhaseIds, setExpandedPhaseIds] = useState<Set<string>>(new Set());
+  const [phasesLoaded, setPhasesLoaded] = useState(20);
+  const phasesLoadedRef = useRef(20);
+  const [loadingMorePhases, setLoadingMorePhases] = useState(false);
   const [phaseMessages, setPhaseMessages] = useState<Record<string, { id: string; content: string; createdAt: string; author: { id: string; name: string }; mentions: { user: { id: string; name: string } }[] }[]>>({});
   const [phaseMessageInput, setPhaseMessageInput] = useState<Record<string, string>>({});
   const [phaseMessageSending, setPhaseMessageSending] = useState<string | null>(null);
@@ -469,11 +472,12 @@ export default function JobDetailPage() {
     const data = await res.json();
     setJob(data);
     setLoading(false);
-    // Fetch dependencies for all phases
+    // Fetch dependencies only for the currently visible phases
     if (data.phases?.length) {
+      const count = phasesLoadedRef.current;
       const depsMap: Record<string, { predecessorDeps: PhaseDependency[]; successorDeps: PhaseDependency[] }> = {};
       await Promise.all(
-        data.phases.map(async (phase: Phase) => {
+        data.phases.slice(0, count).map(async (phase: Phase) => {
           const r = await fetch(`/api/phases/${phase.id}/dependencies`);
           if (r.ok) depsMap[phase.id] = await r.json();
         })
@@ -481,6 +485,23 @@ export default function JobDetailPage() {
       setPhaseDeps(depsMap);
     }
   }, [jobId]);
+
+  const loadMorePhases = async () => {
+    if (!job || loadingMorePhases) return;
+    setLoadingMorePhases(true);
+    const newCount = phasesLoadedRef.current + 20;
+    const depsMap: Record<string, { predecessorDeps: PhaseDependency[]; successorDeps: PhaseDependency[] }> = {};
+    await Promise.all(
+      job.phases.slice(phasesLoadedRef.current, newCount).map(async (phase: Phase) => {
+        const r = await fetch(`/api/phases/${phase.id}/dependencies`);
+        if (r.ok) depsMap[phase.id] = await r.json();
+      })
+    );
+    setPhaseDeps((prev) => ({ ...prev, ...depsMap }));
+    phasesLoadedRef.current = newCount;
+    setPhasesLoaded(newCount);
+    setLoadingMorePhases(false);
+  };
 
   const fetchSchedule = useCallback(async () => {
     const res = await fetch(`/api/schedule?jobId=${jobId}`);
@@ -1330,6 +1351,8 @@ export default function JobDetailPage() {
   }
 
   const phases = job.phases || [];
+  const visiblePhases = phases.slice(0, phasesLoaded);
+  const hasMorePhases = phases.length > phasesLoaded;
   const supervisorUsers = users.filter((u) => u.role === "ADMIN" || u.role === "EMPLOYEE");
 
   // Group documents by phase
@@ -1672,7 +1695,7 @@ export default function JobDetailPage() {
                 <p className="text-gray-400 text-sm">No phases yet</p>
               ) : (
                 <div className="space-y-3">
-                  {(viewPhaseBy === "category" ? sortPhasesByCategory(phases) : [{category: null, phases: sortPhasesByDate(phases)}]).map((group: any) => (
+                  {(viewPhaseBy === "category" ? sortPhasesByCategory(visiblePhases) : [{category: null, phases: sortPhasesByDate(visiblePhases)}]).map((group: any) => (
                     <div key={group.category || "date-view"}>
                       {group.category && (
                         <button
@@ -2128,6 +2151,19 @@ export default function JobDetailPage() {
                       </div>}
                     </div>
                   ))}
+                </div>
+              )}
+              {hasMorePhases && (
+                <div className="flex justify-center pt-4">
+                  <button
+                    onClick={loadMorePhases}
+                    disabled={loadingMorePhases}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium text-sm hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 min-w-[200px]"
+                  >
+                    {loadingMorePhases
+                      ? "Loading..."
+                      : `Load more phases (${phases.length - phasesLoaded} remaining)`}
+                  </button>
                 </div>
               )}
             </div>
