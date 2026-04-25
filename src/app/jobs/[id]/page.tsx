@@ -1728,7 +1728,14 @@ export default function JobDetailPage() {
                             ))}
                           </select>
                           <button
-                            onClick={() => editingPhaseId === phase.id ? setEditingPhaseId(null) : startEditPhaseDates(phase)}
+                            onClick={() => {
+                              if (editingPhaseId === phase.id) {
+                                setEditingPhaseId(null);
+                                setExpandedPhaseIds(prev => { const next = new Set(prev); next.delete(phase.id); return next; });
+                              } else {
+                                startEditPhaseDates(phase);
+                              }
+                            }}
                             className="text-sm text-blue-600 hover:text-blue-800 px-2 py-1.5 min-h-8 rounded-lg hover:bg-blue-50 transition-colors"
                           >
                             {editingPhaseId === phase.id ? "Cancel" : "Edit"}
@@ -1737,7 +1744,7 @@ export default function JobDetailPage() {
                             Del
                           </button>
                         </div>
-                        <span className="text-gray-400 text-xs shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                        <button onClick={() => togglePhaseExpand(phase.id)} className="text-gray-400 hover:text-gray-600 text-xs shrink-0 p-1 hover:bg-gray-100 rounded transition-colors">{isExpanded ? "▲" : "▼"}</button>
                       </div>
 
                       {/* Expandable content */}
