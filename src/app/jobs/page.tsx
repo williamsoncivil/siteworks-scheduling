@@ -36,7 +36,7 @@ export default function JobsPage() {
     if (!confirm(`${label} "${job.name}"?`)) return;
     setArchivingId(job.id);
     await fetch(`/api/jobs/${job.id}`, {
-      method: "PATCH",
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus }),
     });
