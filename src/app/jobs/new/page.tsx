@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Layout from "@/components/Layout";
 import Link from "next/link";
@@ -14,6 +14,21 @@ const PRESET_COLORS = [
   "#EC4899", // pink
 ];
 
+interface TemplatePhase {
+  id: string;
+  name: string;
+  description: string | null;
+  orderIndex: number;
+  category: string | null;
+}
+
+interface JobTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  phases: TemplatePhase[];
+}
+
 export default function NewJobPage() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -23,24 +38,50 @@ export default function NewJobPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const [templates, setTemplates] = useState<JobTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+
+  useEffect(() => {
+    fetch("/api/job-templates")
+      .then((r) => r.json())
+      .then((data) => setTemplates(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }, []);
+
+  const selectedTemplate = templates.find((t) => t.id === selectedTemplateId) ?? null;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
 
     try {
-      const res = await fetch("/api/jobs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, address, description, color }),
-      });
+      let job;
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to create job");
+      if (selectedTemplateId) {
+        const res = await fetch(`/api/jobs/from-template/${selectedTemplateId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, address, description, color }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "Failed to create job");
+        }
+        job = await res.json();
+      } else {
+        const res = await fetch("/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, address, description, color }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || "Failed to create job");
+        }
+        job = await res.json();
       }
 
-      const job = await res.json();
       router.push(`/jobs/${job.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create job");
@@ -129,6 +170,47 @@ export default function NewJobPage() {
               </div>
             </div>
 
+            {/* Template selector */}
+            <div className="border-t border-gray-100 pt-5">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Use Template <span className="text-gray-400">(optional)</span>
+              </label>
+              <select
+                value={selectedTemplateId}
+                onChange={(e) => setSelectedTemplateId(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">— No template —</option>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name} ({t.phases.length} phase{t.phases.length !== 1 ? "s" : ""})
+                  </option>
+                ))}
+              </select>
+
+              {selectedTemplate && (
+                <div className="mt-3 bg-blue-50 border border-blue-100 rounded-lg p-3">
+                  {selectedTemplate.description && (
+                    <p className="text-xs text-blue-700 mb-2">{selectedTemplate.description}</p>
+                  )}
+                  <p className="text-xs font-medium text-blue-800 mb-1.5">
+                    Phases that will be created:
+                  </p>
+                  <ol className="space-y-0.5">
+                    {selectedTemplate.phases.map((p) => (
+                      <li key={p.id} className="text-xs text-blue-700 flex items-center gap-1.5">
+                        <span className="text-blue-400 font-medium">{p.orderIndex + 1}.</span>
+                        <span>{p.name}</span>
+                        {p.category && (
+                          <span className="text-blue-400">({p.category})</span>
+                        )}
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+            </div>
+
             <div className="flex gap-3 pt-2">
               <Link href="/jobs">
                 <button
@@ -143,7 +225,11 @@ export default function NewJobPage() {
                 disabled={loading}
                 className="bg-blue-600 text-white py-2 px-6 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
-                {loading ? "Creating..." : "Create Job"}
+                {loading
+                  ? "Creating..."
+                  : selectedTemplateId
+                  ? "Create from Template"
+                  : "Create Job"}
               </button>
             </div>
           </form>

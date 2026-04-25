@@ -31,6 +31,27 @@ model User {
   telegramChatId          String?
   endOfDayPrompt          Boolean @default(false)
   pushSubscriptions       PushSubscription[]
+  jobTemplates            JobTemplate[]
+}
+
+model JobTemplate {
+  id          String          @id @default(cuid())
+  name        String
+  description String?
+  userId      String
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phases      TemplatePhase[]
+  createdAt   DateTime        @default(now())
+}
+
+model TemplatePhase {
+  id          String      @id @default(cuid())
+  templateId  String
+  template    JobTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  orderIndex  Int
+  category    String?
 }
 
 model Job {

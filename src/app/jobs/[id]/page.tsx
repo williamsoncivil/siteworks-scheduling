@@ -276,6 +276,11 @@ export default function JobDetailPage() {
   const [activeTab, setActiveTab] = useState<TabId>("phases");
   const [loading, setLoading] = useState(true);
   const [copyModal, setCopyModal] = useState(false);
+  const [saveTemplateModal, setSaveTemplateModal] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [templateDesc, setTemplateDesc] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [templateSuccess, setTemplateSuccess] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
@@ -698,6 +703,29 @@ export default function JobDetailPage() {
     });
     setArchiving(false);
     fetchJob();
+  };
+
+  const saveAsTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!templateName.trim()) return;
+    setSavingTemplate(true);
+    const res = await fetch("/api/job-templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: templateName.trim(), description: templateDesc.trim() || null, jobId }),
+    });
+    setSavingTemplate(false);
+    if (res.ok) {
+      setTemplateSuccess(templateName.trim());
+      setTemplateName("");
+      setTemplateDesc("");
+      setTimeout(() => {
+        setSaveTemplateModal(false);
+        setTemplateSuccess(null);
+      }, 2000);
+    } else {
+      alert("Failed to save template.");
+    }
   };
 
   const deleteJob = async () => {
@@ -1449,6 +1477,12 @@ export default function JobDetailPage() {
               className="border border-gray-300 text-gray-700 py-2 px-4 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
             >
               Copy Job
+            </button>
+            <button
+              onClick={() => { setTemplateName(job.name); setTemplateDesc(""); setSaveTemplateModal(true); }}
+              className="border border-gray-300 text-gray-700 py-2 px-4 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+            >
+              Save as Template
             </button>
           </div>
         </div>
@@ -2632,6 +2666,75 @@ export default function JobDetailPage() {
         sourceJobName={job.name}
         onClose={() => setCopyModal(false)}
       />
+
+      {/* Save as Template Modal */}
+      {saveTemplateModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-5">
+              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 text-xl shrink-0">
+                📋
+              </div>
+              <h3 className="text-lg font-bold text-gray-900">Save as Template</h3>
+            </div>
+
+            {templateSuccess ? (
+              <div className="text-center py-4">
+                <div className="text-3xl mb-2">✅</div>
+                <p className="font-semibold text-gray-900">Template saved!</p>
+                <p className="text-sm text-gray-500 mt-1">&ldquo;{templateSuccess}&rdquo; is ready to use when creating new jobs.</p>
+              </div>
+            ) : (
+              <form onSubmit={saveAsTemplate} className="space-y-4">
+                <p className="text-sm text-gray-500">
+                  Saves the phase structure of this job (names, order, categories). Dates and completion are not included.
+                </p>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Template Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={templateName}
+                    onChange={(e) => setTemplateName(e.target.value)}
+                    required
+                    placeholder="Standard Home Build"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Description <span className="text-gray-400">(optional)</span>
+                  </label>
+                  <textarea
+                    value={templateDesc}
+                    onChange={(e) => setTemplateDesc(e.target.value)}
+                    rows={2}
+                    placeholder="Phase structure for a standard residential build..."
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSaveTemplateModal(false)}
+                    className="flex-1 border border-gray-300 text-gray-700 py-2.5 px-4 rounded-lg text-sm font-medium hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingTemplate}
+                    className="flex-1 bg-blue-600 text-white py-2.5 px-4 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {savingTemplate ? "Saving..." : "Save Template"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Delete Job Confirmation Modal */}
       {deleteConfirm && (
