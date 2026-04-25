@@ -2,6 +2,7 @@
 
 import "./globals.css";
 import { SessionProvider } from "next-auth/react";
+import PushSetup from "@/components/PushSetup";
 
 export default function RootLayout({
   children,
@@ -20,7 +21,10 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body>
-        <SessionProvider>{children}</SessionProvider>
+        <SessionProvider>
+          <PushSetup />
+          {children}
+        </SessionProvider>
       </body>
     </html>
   );

@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendMentionEmail, sendNewMessageEmail } from "@/lib/email";
+import { sendPushNotification } from "@/lib/push";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Parse @mentions: match @Name or @First Last (two words)
-  const allUsers = await prisma.user.findMany({ select: { id: true, name: true, email: true, emailNotificationLevel: true, role: true } });
+  const allUsers = await prisma.user.findMany({ select: { id: true, name: true, email: true, emailNotificationLevel: true, pushNotificationLevel: true, role: true } });
   const mentionedUserIds: string[] = [];
 
   // Sort by name length desc so "John Smith" matches before "John"
@@ -72,51 +73,67 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Send email notifications to mentioned users who have it enabled
-  if (mentionedUserIds.length > 0) {
-    const job = await prisma.job.findUnique({ where: { id: jobId }, select: { name: true } });
-    const phase = phaseId ? await prisma.phase.findUnique({ where: { id: phaseId }, select: { name: true } }) : null;
-    const authorUser = await prisma.user.findUnique({ where: { id: session.user.id }, select: { name: true } });
+  // Fetch shared context for notifications once
+  const notifJob = await prisma.job.findUnique({ where: { id: jobId }, select: { name: true } });
+  const notifPhase = phaseId ? await prisma.phase.findUnique({ where: { id: phaseId }, select: { name: true } }) : null;
+  const authorUser = await prisma.user.findUnique({ where: { id: session.user.id }, select: { name: true } });
+  const authorName = authorUser?.name ?? "A teammate";
+  const jobName = notifJob?.name ?? jobId;
+  const phaseName = notifPhase?.name;
+  const pushUrl = `/messages`;
 
+  // Send email + push notifications to mentioned users
+  if (mentionedUserIds.length > 0) {
     for (const uid of mentionedUserIds) {
       const mentionedUser = allUsers.find((u) => u.id === uid);
-      if (mentionedUser?.email && (mentionedUser.emailNotificationLevel === "MENTIONS" || mentionedUser.emailNotificationLevel === "ALL")) {
-        // Fire and forget — don't await so response isn't delayed
+      if (!mentionedUser) continue;
+
+      if (mentionedUser.email && (mentionedUser.emailNotificationLevel === "MENTIONS" || mentionedUser.emailNotificationLevel === "ALL")) {
         sendMentionEmail({
           toEmail: mentionedUser.email,
           toName: mentionedUser.name,
-          fromName: authorUser?.name ?? "A teammate",
+          fromName: authorName,
           messageContent: content.trim(),
-          jobName: job?.name ?? jobId,
-          phaseName: phase?.name,
+          jobName,
+          phaseName,
+        }).catch(console.error);
+      }
+
+      if (mentionedUser.pushNotificationLevel === "MENTIONS" || mentionedUser.pushNotificationLevel === "ALL") {
+        sendPushNotification(mentionedUser.id, {
+          title: `${authorName} mentioned you`,
+          body: `${jobName}${phaseName ? ` → ${phaseName}` : ""}: ${content.trim()}`,
+          url: pushUrl,
         }).catch(console.error);
       }
     }
   }
 
-  // Notify all admins with email notifications enabled (who aren't the author and weren't already @mentioned)
+  // Notify all admins with ALL notifications enabled (not the author, not already @mentioned)
   const admins = allUsers.filter(
     (u) =>
       u.role === "ADMIN" &&
-      u.emailNotificationLevel === "ALL" &&
-      u.email &&
       u.id !== session.user.id &&
       !mentionedUserIds.includes(u.id)
   );
 
-  if (admins.length > 0) {
-    const job = await prisma.job.findUnique({ where: { id: jobId }, select: { name: true } });
-    const phase = phaseId ? await prisma.phase.findUnique({ where: { id: phaseId }, select: { name: true } }) : null;
-    const authorUser = await prisma.user.findUnique({ where: { id: session.user.id }, select: { name: true } });
-
-    for (const admin of admins) {
+  for (const admin of admins) {
+    if (admin.email && admin.emailNotificationLevel === "ALL") {
       sendNewMessageEmail({
-        toEmail: admin.email!,
+        toEmail: admin.email,
         toName: admin.name,
-        fromName: authorUser?.name ?? "A teammate",
+        fromName: authorName,
         messageContent: content.trim(),
-        jobName: job?.name ?? jobId,
-        phaseName: phase?.name,
+        jobName,
+        phaseName,
+      }).catch(console.error);
+    }
+
+    if (admin.pushNotificationLevel === "ALL") {
+      sendPushNotification(admin.id, {
+        title: `New message from ${authorName}`,
+        body: `${jobName}${phaseName ? ` → ${phaseName}` : ""}: ${content.trim()}`,
+        url: pushUrl,
       }).catch(console.error);
     }
   }

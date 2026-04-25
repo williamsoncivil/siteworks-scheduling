@@ -25,10 +25,12 @@ model User {
   documents            Document[]
   phasesLed           Phase[]
   messagesLastReadAt      DateTime?
-  emailNotificationLevel  EmailNotificationLevel @default(ALL)
+  emailNotificationLevel  EmailNotificationLevel  @default(ALL)
+  pushNotificationLevel   PushNotificationLevel   @default(NONE)
   mentions                MessageMention[]
   telegramChatId          String?
   endOfDayPrompt          Boolean @default(false)
+  pushSubscriptions       PushSubscription[]
 }
 
 model Job {
@@ -88,6 +90,22 @@ enum EmailNotificationLevel {
   NONE
   MENTIONS
   ALL
+}
+
+enum PushNotificationLevel {
+  NONE
+  MENTIONS
+  ALL
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
 }
 
 enum DependencyType {

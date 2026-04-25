@@ -25,6 +25,9 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [emailNotificationLevel, setEmailNotificationLevel] = useState<"NONE" | "MENTIONS" | "ALL">("ALL");
   const [savingPref, setSavingPref] = useState(false);
+  const [pushNotificationLevel, setPushNotificationLevel] = useState<"NONE" | "MENTIONS" | "ALL">("NONE");
+  const [savingPush, setSavingPush] = useState(false);
+  const [pushSupported, setPushSupported] = useState(false);
   const [telegramChatId, setTelegramChatId] = useState("");
   const [endOfDayPrompt, setEndOfDayPrompt] = useState(false);
   const [savingTelegram, setSavingTelegram] = useState(false);
@@ -67,20 +70,22 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchUsers();
-    // Load current user's own preferences
     fetch("/api/users/me").then((r) => r.json()).then((d) => {
       if (d.emailNotificationLevel === "NONE" || d.emailNotificationLevel === "MENTIONS" || d.emailNotificationLevel === "ALL") {
         setEmailNotificationLevel(d.emailNotificationLevel);
       }
+      if (d.pushNotificationLevel === "NONE" || d.pushNotificationLevel === "MENTIONS" || d.pushNotificationLevel === "ALL") {
+        setPushNotificationLevel(d.pushNotificationLevel);
+      }
       if (d.telegramChatId) setTelegramChatId(d.telegramChatId);
       if (typeof d.endOfDayPrompt === "boolean") setEndOfDayPrompt(d.endOfDayPrompt);
     });
-    // Load custom categories (if admin)
     if (session?.user?.role === "ADMIN") {
       fetch("/api/settings/categories").then((r) => r.json()).then((d) => {
         if (d.custom) setCustomCategories(d.custom);
       });
     }
+    setPushSupported("serviceWorker" in navigator && "PushManager" in window);
   }, [session?.user?.role]);
 
   const addCategory = async (e: React.FormEvent) => {
@@ -154,6 +159,40 @@ export default function SettingsPage() {
       body: JSON.stringify({ emailNotificationLevel: val }),
     });
     setSavingPref(false);
+  };
+
+  const setPushLevel = async (val: "NONE" | "MENTIONS" | "ALL") => {
+    setSavingPush(true);
+    try {
+      if (val !== "NONE") {
+        const permission = await Notification.requestPermission();
+        if (permission !== "granted") {
+          setSavingPush(false);
+          return;
+        }
+        const reg = await navigator.serviceWorker.ready;
+        const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+        if (vapidKey) {
+          const sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: vapidKey,
+          });
+          await fetch("/api/notifications/subscribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(sub.toJSON()),
+          });
+        }
+      }
+      await fetch("/api/users/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pushNotificationLevel: val }),
+      });
+      setPushNotificationLevel(val);
+    } finally {
+      setSavingPush(false);
+    }
   };
 
   const isAdmin = session?.user?.role === "ADMIN";
@@ -287,6 +326,36 @@ export default function SettingsPage() {
           </div>
           {savingPref && <p className="text-xs text-gray-400 mt-2">Saving…</p>}
         </div>
+
+        {/* ── Push Notifications ── */}
+        {pushSupported && (
+          <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
+            <h2 className="font-semibold text-gray-900 mb-1">Push Notifications</h2>
+            <p className="text-sm text-gray-500 mb-4">Receive browser push notifications for new messages.</p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              {([
+                { value: "NONE", label: "Off", description: "No push notifications" },
+                { value: "MENTIONS", label: "@Mentions only", description: "Push when someone @mentions you" },
+                { value: "ALL", label: "All messages", description: "Push on every new message" },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setPushLevel(opt.value)}
+                  disabled={savingPush}
+                  className={`flex-1 text-left px-4 py-3 rounded-lg border-2 transition-colors disabled:opacity-50 ${
+                    pushNotificationLevel === opt.value
+                      ? "border-blue-500 bg-blue-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <p className={`text-sm font-medium ${pushNotificationLevel === opt.value ? "text-blue-700" : "text-gray-900"}`}>{opt.label}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
+                </button>
+              ))}
+            </div>
+            {savingPush && <p className="text-xs text-gray-400 mt-2">Saving…</p>}
+          </div>
+        )}
 
         {/* ── Telegram / End-of-Day Prompts ── */}
         <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
