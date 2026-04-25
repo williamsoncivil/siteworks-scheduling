@@ -48,7 +48,7 @@ const roleBadge: Record<string, string> = {
 
 export default function PersonPage() {
   const params = useParams();
-  const userId = params.id as string;
+  const userId = (params?.id ?? "") as string;
 
   const [user, setUser] = useState<UserDetail | null>(null);
   const [loading, setLoading] = useState(true);

@@ -19,7 +19,7 @@ export default function BottomNav() {
 
   const isActive = (href: string) => {
     if (href === "/schedule") return pathname === "/schedule";
-    return pathname.startsWith(href);
+    return pathname?.startsWith(href) ?? false;
   };
 
   return (

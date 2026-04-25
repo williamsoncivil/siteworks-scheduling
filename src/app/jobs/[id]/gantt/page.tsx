@@ -61,7 +61,7 @@ function skipWeekendDisplay(d: Date): boolean {
 
 export default function JobGanttPage() {
   const params = useParams();
-  const jobId = params.id as string;
+  const jobId = (params?.id ?? "") as string;
 
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);

@@ -9,6 +9,7 @@ import CopyJobModal from "@/components/CopyJobModal";
 import Link from "next/link";
 import { format, parseISO, parse, addDays } from "date-fns";
 import { PREDEFINED_CATEGORIES, sortPhasesByCategory, sortPhasesByDate } from "@/lib/categories";
+import { useSocket } from "@/context/SocketContext";
 
 // Parse a date string (YYYY-MM-DD or ISO) as LOCAL midnight to avoid UTC timezone shift
 const parseLocalDate = (dateStr: string) => parse(dateStr.split("T")[0], "yyyy-MM-dd", new Date());
@@ -267,9 +268,11 @@ const statusColors: Record<string, string> = {
 export default function JobDetailPage() {
   const params = useParams();
   const { data: session } = useSession();
-  const jobId = params.id as string;
+  const jobId = (params?.id ?? "") as string;
+  const { socket, isConnected } = useSocket();
 
   const [job, setJob] = useState<Job | null>(null);
+  const [realtimeToast, setRealtimeToast] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("phases");
   const [loading, setLoading] = useState(true);
   const [copyModal, setCopyModal] = useState(false);
@@ -516,6 +519,34 @@ export default function JobDetailPage() {
     fetchUsers();
     fetchSchedule();
   }, [fetchJob, fetchUsers, fetchSchedule]);
+
+  // Real-time phase updates via WebSocket
+  useEffect(() => {
+    if (!socket) return;
+
+    const handlePhaseUpdated = (data: { phaseId: string; jobId: string; phase: Phase }) => {
+      if (data.jobId !== jobId) return;
+      setJob((prev) =>
+        prev
+          ? { ...prev, phases: prev.phases.map((p) => (p.id === data.phaseId ? { ...p, ...data.phase } : p)) }
+          : prev
+      );
+      setRealtimeToast(`Phase "${data.phase.name}" was updated`);
+      setTimeout(() => setRealtimeToast(null), 4000);
+    };
+
+    const handleReconnect = () => {
+      fetchJob();
+    };
+
+    socket.on("phase-updated", handlePhaseUpdated);
+    socket.io.on("reconnect", handleReconnect);
+
+    return () => {
+      socket.off("phase-updated", handlePhaseUpdated);
+      socket.io.off("reconnect", handleReconnect);
+    };
+  }, [socket, jobId, fetchJob]);
 
   // Load collapsed category state from localStorage on mount
   useEffect(() => {
@@ -2637,6 +2668,21 @@ export default function JobDetailPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Connection lost badge */}
+      {socket && !isConnected && (
+        <div className="fixed bottom-4 left-4 z-50 bg-gray-700 text-white text-xs px-3 py-1.5 rounded-full shadow-lg flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />
+          Connection lost
+        </div>
+      )}
+
+      {/* Realtime phase update toast */}
+      {realtimeToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-gray-800 text-white text-sm px-4 py-2 rounded-full shadow-xl animate-in slide-in-from-bottom-4">
+          {realtimeToast}
         </div>
       )}
 

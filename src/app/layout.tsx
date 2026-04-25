@@ -3,6 +3,7 @@
 import "./globals.css";
 import { SessionProvider } from "next-auth/react";
 import PushSetup from "@/components/PushSetup";
+import { SocketProvider } from "@/context/SocketContext";
 
 export default function RootLayout({
   children,
@@ -22,8 +23,10 @@ export default function RootLayout({
       </head>
       <body>
         <SessionProvider>
-          <PushSetup />
-          {children}
+          <SocketProvider>
+            <PushSetup />
+            {children}
+          </SocketProvider>
         </SessionProvider>
       </body>
     </html>

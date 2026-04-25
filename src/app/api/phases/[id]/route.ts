@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { cascadePhaseUpdate } from "@/lib/cascade";
+import { broadcastPhaseUpdated } from "@/lib/socket";
 
 export async function GET(
   req: NextRequest,
@@ -79,6 +80,12 @@ export async function PATCH(
   if ((startDate !== undefined || endDate !== undefined) && (newStart || newEnd)) {
     cascadedPhases = await cascadePhaseUpdate(params.id, newStart, newEnd);
   }
+
+  broadcastPhaseUpdated({
+    phaseId: updatedPhase.id,
+    jobId: updatedPhase.jobId,
+    phase: updatedPhase as unknown as Record<string, unknown>,
+  });
 
   return NextResponse.json({ phase: updatedPhase, cascadedPhases });
 }
