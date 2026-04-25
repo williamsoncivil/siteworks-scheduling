@@ -23,6 +23,25 @@ export default function SettingsPage() {
   const { data: session } = useSession();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Profile
+  const [profileName, setProfileName] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [profilePhone, setProfilePhone] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState("");
+
+  // Password change modal
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPasswordModal, setNewPasswordModal] = useState("");
+  const [confirmPasswordModal, setConfirmPasswordModal] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState(false);
+
+  // Notifications
   const [emailNotificationLevel, setEmailNotificationLevel] = useState<"NONE" | "MENTIONS" | "ALL">("ALL");
   const [savingPref, setSavingPref] = useState(false);
   const [pushNotificationLevel, setPushNotificationLevel] = useState<"NONE" | "MENTIONS" | "ALL">("NONE");
@@ -32,6 +51,8 @@ export default function SettingsPage() {
   const [endOfDayPrompt, setEndOfDayPrompt] = useState(false);
   const [savingTelegram, setSavingTelegram] = useState(false);
   const [telegramSaved, setTelegramSaved] = useState(false);
+
+  // Team management
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<User>>({});
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -40,7 +61,7 @@ export default function SettingsPage() {
   // New user form
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
-  const [newPassword, setNewPassword] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
   const [newRole, setNewRole] = useState<"ADMIN" | "EMPLOYEE" | "SUBCONTRACTOR">("EMPLOYEE");
   const [newPhone, setNewPhone] = useState("");
   const [creating, setCreating] = useState(false);
@@ -71,6 +92,9 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchUsers();
     fetch("/api/users/me").then((r) => r.json()).then((d) => {
+      if (d.name) setProfileName(d.name);
+      if (d.email) setProfileEmail(d.email);
+      setProfilePhone(d.phone || "");
       if (d.emailNotificationLevel === "NONE" || d.emailNotificationLevel === "MENTIONS" || d.emailNotificationLevel === "ALL") {
         setEmailNotificationLevel(d.emailNotificationLevel);
       }
@@ -87,6 +111,69 @@ export default function SettingsPage() {
     }
     setPushSupported("serviceWorker" in navigator && "PushManager" in window);
   }, [session?.user?.role]);
+
+  const saveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingProfile(true);
+    setProfileError("");
+    setProfileSaved(false);
+    try {
+      const res = await fetch("/api/users/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: profileName, email: profileEmail, phone: profilePhone || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setProfileError(data.error || "Failed to save profile");
+        return;
+      }
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 3000);
+    } catch {
+      setProfileError("Failed to save profile");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const changePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPasswordModal !== confirmPasswordModal) {
+      setPasswordError("New passwords do not match");
+      return;
+    }
+    if (newPasswordModal.length < 6) {
+      setPasswordError("Password must be at least 6 characters");
+      return;
+    }
+    setSavingPassword(true);
+    setPasswordError("");
+    try {
+      const res = await fetch("/api/users/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword, newPassword: newPasswordModal }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setPasswordError(data.error || "Failed to change password");
+        return;
+      }
+      setPasswordSuccess(true);
+      setCurrentPassword("");
+      setNewPasswordModal("");
+      setConfirmPasswordModal("");
+      setTimeout(() => {
+        setPasswordSuccess(false);
+        setShowPasswordModal(false);
+      }, 2000);
+    } catch {
+      setPasswordError("Failed to change password");
+    } finally {
+      setSavingPassword(false);
+    }
+  };
 
   const addCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -114,7 +201,7 @@ export default function SettingsPage() {
         const err = await res.json();
         setCategoryError(err.error || "Failed to add category");
       }
-    } catch (err) {
+    } catch {
       setCategoryError("Error adding category");
     } finally {
       setAddingCategory(false);
@@ -132,7 +219,7 @@ export default function SettingsPage() {
       } else {
         setCategoryError("Failed to remove category");
       }
-    } catch (err) {
+    } catch {
       setCategoryError("Error removing category");
     }
   };
@@ -257,7 +344,6 @@ export default function SettingsPage() {
     setCreating(true);
     setCreateError("");
     setCreateSuccess(false);
-
     try {
       const res = await fetch("/api/people", {
         method: "POST",
@@ -265,20 +351,18 @@ export default function SettingsPage() {
         body: JSON.stringify({
           name: newName,
           email: newEmail,
-          password: newPassword,
+          password: newUserPassword,
           role: newRole,
           phone: newPhone || null,
         }),
       });
-
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || "Failed to create user");
       }
-
       setNewName("");
       setNewEmail("");
-      setNewPassword("");
+      setNewUserPassword("");
       setNewRole("EMPLOYEE");
       setNewPhone("");
       setCreateSuccess(true);
@@ -291,355 +375,35 @@ export default function SettingsPage() {
     }
   };
 
+  const SectionHeader = ({ children }: { children: React.ReactNode }) => (
+    <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-1 mb-3">{children}</h2>
+  );
+
   return (
     <Layout>
       <div className="p-6 max-w-4xl mx-auto">
-        <div className="mb-6">
+        <div className="mb-8">
           <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Manage team members and access</p>
+          <p className="text-gray-500 text-sm mt-0.5">Manage your profile, notifications, and team</p>
         </div>
 
-        {/* ── My Notifications (visible to everyone) ── */}
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-          <h2 className="font-semibold text-gray-900 mb-1">My Notifications</h2>
-          <p className="text-sm text-gray-500 mb-4">Choose when you receive email notifications.</p>
-          <div className="flex flex-col sm:flex-row gap-3">
-            {([
-              { value: "NONE", label: "Off", description: "No emails" },
-              { value: "MENTIONS", label: "@Mentions only", description: "Email when someone @mentions you" },
-              { value: "ALL", label: "All messages", description: "Email on every new message" },
-            ] as const).map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setEmailLevel(opt.value)}
-                disabled={savingPref}
-                className={`flex-1 text-left px-4 py-3 rounded-lg border-2 transition-colors disabled:opacity-50 ${
-                  emailNotificationLevel === opt.value
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-gray-200 hover:border-gray-300"
-                }`}
-              >
-                <p className={`text-sm font-medium ${emailNotificationLevel === opt.value ? "text-blue-700" : "text-gray-900"}`}>{opt.label}</p>
-                <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
-              </button>
-            ))}
-          </div>
-          {savingPref && <p className="text-xs text-gray-400 mt-2">Saving…</p>}
-        </div>
-
-        {/* ── Push Notifications ── */}
-        {pushSupported && (
-          <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-            <h2 className="font-semibold text-gray-900 mb-1">Push Notifications</h2>
-            <p className="text-sm text-gray-500 mb-4">Receive browser push notifications for new messages.</p>
-            <div className="flex flex-col sm:flex-row gap-3">
-              {([
-                { value: "NONE", label: "Off", description: "No push notifications" },
-                { value: "MENTIONS", label: "@Mentions only", description: "Push when someone @mentions you" },
-                { value: "ALL", label: "All messages", description: "Push on every new message" },
-              ] as const).map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setPushLevel(opt.value)}
-                  disabled={savingPush}
-                  className={`flex-1 text-left px-4 py-3 rounded-lg border-2 transition-colors disabled:opacity-50 ${
-                    pushNotificationLevel === opt.value
-                      ? "border-blue-500 bg-blue-50"
-                      : "border-gray-200 hover:border-gray-300"
-                  }`}
-                >
-                  <p className={`text-sm font-medium ${pushNotificationLevel === opt.value ? "text-blue-700" : "text-gray-900"}`}>{opt.label}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
-                </button>
-              ))}
-            </div>
-            {savingPush && <p className="text-xs text-gray-400 mt-2">Saving…</p>}
-          </div>
-        )}
-
-        {/* ── Telegram / End-of-Day Prompts ── */}
-        <div className="bg-white rounded-xl shadow-sm p-6 mb-6">
-          <h2 className="font-semibold text-gray-900 mb-1">End-of-Day Update Prompts</h2>
-          <p className="text-sm text-gray-500 mb-4">Receive a Telegram message at 5 PM on weekdays asking for phase progress updates.</p>
-
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <p className="text-sm font-medium text-gray-900">End-of-day update prompt</p>
-              <p className="text-xs text-gray-500">Get a daily check-in message via Telegram</p>
-            </div>
-            <button
-              onClick={() => setEndOfDayPrompt(!endOfDayPrompt)}
-              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${endOfDayPrompt ? "bg-blue-600" : "bg-gray-300"}`}
-            >
-              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${endOfDayPrompt ? "translate-x-6" : "translate-x-1"}`} />
-            </button>
-          </div>
-
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Telegram Chat ID</label>
-            <input
-              type="text"
-              value={telegramChatId}
-              onChange={(e) => setTelegramChatId(e.target.value)}
-              placeholder="e.g. 123456789"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-gray-400 mt-1">Start a chat with @WilliamsonSchedule_bot, then type /start to get your chat ID</p>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <button
-              onClick={saveTelegramSettings}
-              disabled={savingTelegram}
-              className="bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
-            >
-              {savingTelegram ? "Saving…" : "Save"}
-            </button>
-            {telegramSaved && <p className="text-sm text-green-600">Saved!</p>}
-          </div>
-        </div>
-
-        {!isAdmin && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-6">
-            <p className="text-yellow-800 text-sm">⚠️ You need Admin access to manage users.</p>
-          </div>
-        )}
-
-        {/* User list */}
-        <div className="bg-white rounded-xl shadow-sm mb-6">
-          <div className="p-5 border-b border-gray-100">
-            <h2 className="font-semibold text-gray-900">Team Members</h2>
-          </div>
-          {deleteError && (
-            <div className="mx-5 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-              {deleteError}
-              <button onClick={() => setDeleteError("")} className="ml-2 text-red-400 hover:text-red-600">✕</button>
-            </div>
-          )}
-          {loading ? (
-            <div className="p-5 text-gray-400">Loading...</div>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {users.map((user) => (
-                <div key={user.id} className="p-4">
-                  {editingId === user.id ? (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Name</label>
-                        <input
-                          type="text"
-                          value={editData.name ?? user.name}
-                          onChange={(e) => setEditData({ ...editData, name: e.target.value })}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Email</label>
-                        <input
-                          type="email"
-                          value={editData.email ?? user.email}
-                          onChange={(e) => setEditData({ ...editData, email: e.target.value })}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Role</label>
-                        <select
-                          value={editData.role ?? user.role}
-                          onChange={(e) => setEditData({ ...editData, role: e.target.value as "ADMIN" | "EMPLOYEE" | "SUBCONTRACTOR" })}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value="ADMIN">ADMIN</option>
-                          <option value="EMPLOYEE">EMPLOYEE</option>
-                          <option value="SUBCONTRACTOR">SUBCONTRACTOR</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 mb-1">Phone</label>
-                        <input
-                          type="tel"
-                          value={editData.phone ?? user.phone ?? ""}
-                          onChange={(e) => setEditData({ ...editData, phone: e.target.value })}
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div className="sm:col-span-2 flex gap-3">
-                        <button onClick={() => setEditingId(null)} className="border border-gray-300 text-gray-700 py-2 px-3 rounded-lg text-sm hover:bg-gray-50">
-                          Cancel
-                        </button>
-                        <button onClick={() => saveEdit(user.id)} className="bg-blue-600 text-white py-2 px-3 rounded-lg text-sm hover:bg-blue-700">
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-4">
-                      <div className="w-9 h-9 rounded-full bg-slate-800 flex items-center justify-center text-white font-bold text-sm shrink-0">
-                        {user.name[0]}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium text-gray-900 truncate">{user.name}</p>
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${roleBadge[user.role]}`}>
-                            {user.role}
-                          </span>
-                        </div>
-                        <p className="text-sm text-gray-500 truncate">{user.email}</p>
-                        {user.phone && <p className="text-xs text-gray-400">{user.phone}</p>}
-                      </div>
-                      {isAdmin && (
-                        <div className="flex items-center gap-3 shrink-0">
-                          <button
-                            onClick={() => {
-                              setEditingId(user.id);
-                              setEditData({});
-                            }}
-                            className="text-sm text-blue-600 hover:text-blue-800"
-                          >
-                            Edit
-                          </button>
-                          {user.id !== session?.user?.id && (
-                            <button
-                              onClick={() => deleteUser(user)}
-                              disabled={deletingId === user.id}
-                              className="text-sm text-red-500 hover:text-red-700 disabled:opacity-50"
-                            >
-                              {deletingId === user.id ? "Deleting…" : "Delete"}
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Add Subcontractor */}
-        {isAdmin && (
-          <div className="bg-white rounded-xl shadow-sm p-6 mb-6 border-l-4 border-orange-400">
-            <h2 className="font-semibold text-gray-900 mb-1">Add Subcontractor</h2>
-            <p className="text-sm text-gray-500 mb-4">No login required — subcontractors appear in scheduling but can't access the app.</p>
-            {subSuccess && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">✓ Subcontractor added</div>}
-            {subError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{subError}</div>}
-            <form onSubmit={createSubcontractor} className="grid gap-4 sm:grid-cols-3">
+        {/* ─── Profile ─── */}
+        <div className="mb-8">
+          <SectionHeader>Profile</SectionHeader>
+          <div className="bg-white rounded-xl shadow-sm p-6">
+            {profileError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{profileError}</div>
+            )}
+            {profileSaved && (
+              <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">Profile saved</div>
+            )}
+            <form onSubmit={saveProfile} className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                <input type="text" value={subName} onChange={(e) => setSubName(e.target.value)} required placeholder="John Smith" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Trade / Company <span className="text-gray-400">(optional)</span></label>
-                <input type="text" value={subTrade} onChange={(e) => setSubTrade(e.target.value)} placeholder="Framing, Electrical…" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Phone <span className="text-gray-400">(optional)</span></label>
-                <input type="tel" value={subPhone} onChange={(e) => setSubPhone(e.target.value)} placeholder="360-555-0100" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-              </div>
-              <div className="sm:col-span-3">
-                <button type="submit" disabled={creatingSub} className="bg-orange-500 text-white py-2 px-6 rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50">
-                  {creatingSub ? "Adding..." : "Add Subcontractor"}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* Phase Categories */}
-        {isAdmin && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h2 className="font-semibold text-gray-900 mb-4">Phase Categories</h2>
-            <p className="text-sm text-gray-600 mb-4">Manage custom phase categories. Predefined categories are always available.</p>
-
-            {categoryError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                {categoryError}
-              </div>
-            )}
-
-            {/* Predefined categories */}
-            <div className="mb-6">
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">Predefined</h3>
-              <div className="flex flex-wrap gap-2">
-                {PREDEFINED_CATEGORIES.map((cat) => (
-                  <span key={cat} className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
-                    {cat}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            {/* Custom categories */}
-            {customCategories.length > 0 && (
-              <div className="mb-6">
-                <h3 className="text-sm font-semibold text-gray-700 mb-2">Custom</h3>
-                <div className="flex flex-wrap gap-2">
-                  {customCategories.map((cat) => (
-                    <div
-                      key={cat}
-                      className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2"
-                    >
-                      {cat}
-                      <button
-                        onClick={() => removeCategory(cat)}
-                        className="ml-1 text-indigo-600 hover:text-indigo-800 font-bold text-xs"
-                        title="Delete category"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Add new category */}
-            <div>
-              <h3 className="text-sm font-semibold text-gray-700 mb-2">Add Custom Category</h3>
-              <form onSubmit={addCategory} className="flex gap-2">
                 <input
                   type="text"
-                  value={newCategory}
-                  onChange={(e) => setNewCategory(e.target.value)}
-                  placeholder="e.g., Landscaping, Concrete..."
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <button
-                  type="submit"
-                  disabled={addingCategory || !newCategory.trim()}
-                  className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {addingCategory ? "Adding..." : "Add"}
-                </button>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Add new user */}
-        {isAdmin && (
-          <div className="bg-white rounded-xl shadow-sm p-6">
-            <h2 className="font-semibold text-gray-900 mb-4">Add Team Member</h2>
-
-            {createSuccess && (
-              <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
-                ✓ User created successfully
-              </div>
-            )}
-            {createError && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                {createError}
-              </div>
-            )}
-
-            <form onSubmit={createUser} className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                <input
-                  type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
                   required
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -648,57 +412,502 @@ export default function SettingsPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                 <input
                   type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
+                  value={profileEmail}
+                  onChange={(e) => setProfileEmail(e.target.value)}
                   required
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  required
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                <select
-                  value={newRole}
-                  onChange={(e) => setNewRole(e.target.value as "ADMIN" | "EMPLOYEE" | "SUBCONTRACTOR")}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="ADMIN">Admin</option>
-                  <option value="EMPLOYEE">Employee</option>
-                  <option value="SUBCONTRACTOR">Subcontractor</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Phone <span className="text-gray-400">(optional)</span></label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Phone <span className="text-gray-400 font-normal">(optional)</span>
+                </label>
                 <input
                   type="tel"
-                  value={newPhone}
-                  onChange={(e) => setNewPhone(e.target.value)}
+                  value={profilePhone}
+                  onChange={(e) => setProfilePhone(e.target.value)}
                   placeholder="360-555-0100"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-              <div className="sm:col-span-2">
+              <div className="sm:col-span-2 flex items-center gap-3 pt-1">
                 <button
                   type="submit"
-                  disabled={creating}
-                  className="bg-blue-600 text-white py-2 px-6 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  disabled={savingProfile}
+                  className="bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
                 >
-                  {creating ? "Creating..." : "Add Team Member"}
+                  {savingProfile ? "Saving…" : "Save Profile"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setShowPasswordModal(true); setPasswordError(""); setPasswordSuccess(false); }}
+                  className="border border-gray-300 text-gray-700 py-2 px-4 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                >
+                  Change Password
                 </button>
               </div>
             </form>
           </div>
+        </div>
+
+        {/* ─── Notifications ─── */}
+        <div className="mb-8">
+          <SectionHeader>Notifications</SectionHeader>
+
+          <div className="bg-white rounded-xl shadow-sm p-6 mb-4">
+            <h3 className="font-medium text-gray-900 mb-1">Email Notifications</h3>
+            <p className="text-sm text-gray-500 mb-4">Choose when you receive email notifications.</p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              {([
+                { value: "NONE", label: "Off", description: "No emails" },
+                { value: "MENTIONS", label: "@Mentions only", description: "Email when someone @mentions you" },
+                { value: "ALL", label: "All messages", description: "Email on every new message" },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setEmailLevel(opt.value)}
+                  disabled={savingPref}
+                  className={`flex-1 text-left px-4 py-3 rounded-lg border-2 transition-colors disabled:opacity-50 ${
+                    emailNotificationLevel === opt.value
+                      ? "border-blue-500 bg-blue-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <p className={`text-sm font-medium ${emailNotificationLevel === opt.value ? "text-blue-700" : "text-gray-900"}`}>{opt.label}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
+                </button>
+              ))}
+            </div>
+            {savingPref && <p className="text-xs text-gray-400 mt-2">Saving…</p>}
+          </div>
+
+          {pushSupported && (
+            <div className="bg-white rounded-xl shadow-sm p-6 mb-4">
+              <h3 className="font-medium text-gray-900 mb-1">Push Notifications</h3>
+              <p className="text-sm text-gray-500 mb-4">Receive browser push notifications for new messages.</p>
+              <div className="flex flex-col sm:flex-row gap-3">
+                {([
+                  { value: "NONE", label: "Off", description: "No push notifications" },
+                  { value: "MENTIONS", label: "@Mentions only", description: "Push when someone @mentions you" },
+                  { value: "ALL", label: "All messages", description: "Push on every new message" },
+                ] as const).map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setPushLevel(opt.value)}
+                    disabled={savingPush}
+                    className={`flex-1 text-left px-4 py-3 rounded-lg border-2 transition-colors disabled:opacity-50 ${
+                      pushNotificationLevel === opt.value
+                        ? "border-blue-500 bg-blue-50"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <p className={`text-sm font-medium ${pushNotificationLevel === opt.value ? "text-blue-700" : "text-gray-900"}`}>{opt.label}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
+                  </button>
+                ))}
+              </div>
+              {savingPush && <p className="text-xs text-gray-400 mt-2">Saving…</p>}
+            </div>
+          )}
+
+          <div className="bg-white rounded-xl shadow-sm p-6">
+            <h3 className="font-medium text-gray-900 mb-1">Telegram — End-of-Day Prompts</h3>
+            <p className="text-sm text-gray-500 mb-4">Receive a Telegram message at 5 PM on weekdays asking for phase progress updates.</p>
+
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <p className="text-sm font-medium text-gray-900">End-of-day update prompt</p>
+                <p className="text-xs text-gray-500">Get a daily check-in message via Telegram</p>
+              </div>
+              <button
+                onClick={() => setEndOfDayPrompt(!endOfDayPrompt)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${endOfDayPrompt ? "bg-blue-600" : "bg-gray-300"}`}
+              >
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${endOfDayPrompt ? "translate-x-6" : "translate-x-1"}`} />
+              </button>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Telegram Chat ID</label>
+              <input
+                type="text"
+                value={telegramChatId}
+                onChange={(e) => setTelegramChatId(e.target.value)}
+                placeholder="e.g. 123456789"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-400 mt-1">Start a chat with @WilliamsonSchedule_bot, then type /start to get your chat ID</p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={saveTelegramSettings}
+                disabled={savingTelegram}
+                className="bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {savingTelegram ? "Saving…" : "Save"}
+              </button>
+              {telegramSaved && <p className="text-sm text-green-600">Saved!</p>}
+            </div>
+          </div>
+        </div>
+
+        {/* ─── Team Management (admin only) ─── */}
+        {!isAdmin && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 mb-8">
+            <p className="text-yellow-800 text-sm">You need Admin access to manage users.</p>
+          </div>
+        )}
+
+        {isAdmin && (
+          <div className="mb-8">
+            <SectionHeader>Team Management</SectionHeader>
+
+            <div className="bg-white rounded-xl shadow-sm mb-4">
+              <div className="p-5 border-b border-gray-100">
+                <h3 className="font-medium text-gray-900">Team Members</h3>
+              </div>
+              {deleteError && (
+                <div className="mx-5 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  {deleteError}
+                  <button onClick={() => setDeleteError("")} className="ml-2 text-red-400 hover:text-red-600">✕</button>
+                </div>
+              )}
+              {loading ? (
+                <div className="p-5 text-gray-400">Loading...</div>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {users.map((user) => (
+                    <div key={user.id} className="p-4">
+                      {editingId === user.id ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Name</label>
+                            <input
+                              type="text"
+                              value={editData.name ?? user.name}
+                              onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Email</label>
+                            <input
+                              type="email"
+                              value={editData.email ?? user.email}
+                              onChange={(e) => setEditData({ ...editData, email: e.target.value })}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Role</label>
+                            <select
+                              value={editData.role ?? user.role}
+                              onChange={(e) => setEditData({ ...editData, role: e.target.value as "ADMIN" | "EMPLOYEE" | "SUBCONTRACTOR" })}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                              <option value="ADMIN">ADMIN</option>
+                              <option value="EMPLOYEE">EMPLOYEE</option>
+                              <option value="SUBCONTRACTOR">SUBCONTRACTOR</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Phone</label>
+                            <input
+                              type="tel"
+                              value={editData.phone ?? user.phone ?? ""}
+                              onChange={(e) => setEditData({ ...editData, phone: e.target.value })}
+                              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                          </div>
+                          <div className="sm:col-span-2 flex gap-3">
+                            <button onClick={() => setEditingId(null)} className="border border-gray-300 text-gray-700 py-2 px-3 rounded-lg text-sm hover:bg-gray-50">
+                              Cancel
+                            </button>
+                            <button onClick={() => saveEdit(user.id)} className="bg-blue-600 text-white py-2 px-3 rounded-lg text-sm hover:bg-blue-700">
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-4">
+                          <div className="w-9 h-9 rounded-full bg-slate-800 flex items-center justify-center text-white font-bold text-sm shrink-0">
+                            {user.name[0]}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium text-gray-900 truncate">{user.name}</p>
+                              <span className={`text-xs font-medium px-2 py-0.5 rounded-full shrink-0 ${roleBadge[user.role]}`}>
+                                {user.role}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-500 truncate">{user.email}</p>
+                            {user.phone && <p className="text-xs text-gray-400">{user.phone}</p>}
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <button
+                              onClick={() => { setEditingId(user.id); setEditData({}); }}
+                              className="text-sm text-blue-600 hover:text-blue-800"
+                            >
+                              Edit
+                            </button>
+                            {user.id !== session?.user?.id && (
+                              <button
+                                onClick={() => deleteUser(user)}
+                                disabled={deletingId === user.id}
+                                className="text-sm text-red-500 hover:text-red-700 disabled:opacity-50"
+                              >
+                                {deletingId === user.id ? "Deleting…" : "Delete"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm p-6 mb-4">
+              <h3 className="font-medium text-gray-900 mb-1">Add Team Member</h3>
+              <p className="text-sm text-gray-500 mb-4">Create a login account for an employee or admin.</p>
+              {createSuccess && (
+                <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">User created successfully</div>
+              )}
+              {createError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{createError}</div>
+              )}
+              <form onSubmit={createUser} className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    required
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    required
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                  <input
+                    type="password"
+                    value={newUserPassword}
+                    onChange={(e) => setNewUserPassword(e.target.value)}
+                    required
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                  <select
+                    value={newRole}
+                    onChange={(e) => setNewRole(e.target.value as "ADMIN" | "EMPLOYEE" | "SUBCONTRACTOR")}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="ADMIN">Admin</option>
+                    <option value="EMPLOYEE">Employee</option>
+                    <option value="SUBCONTRACTOR">Subcontractor</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Phone <span className="text-gray-400 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={newPhone}
+                    onChange={(e) => setNewPhone(e.target.value)}
+                    placeholder="360-555-0100"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <button
+                    type="submit"
+                    disabled={creating}
+                    className="bg-blue-600 text-white py-2 px-6 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+                  >
+                    {creating ? "Creating..." : "Add Team Member"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm p-6 border-l-4 border-orange-400">
+              <h3 className="font-medium text-gray-900 mb-1">Add Subcontractor</h3>
+              <p className="text-sm text-gray-500 mb-4">No login required — subcontractors appear in scheduling but can't access the app.</p>
+              {subSuccess && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">Subcontractor added</div>}
+              {subError && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{subError}</div>}
+              <form onSubmit={createSubcontractor} className="grid gap-4 sm:grid-cols-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <input type="text" value={subName} onChange={(e) => setSubName(e.target.value)} required placeholder="John Smith" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Trade / Company <span className="text-gray-400 font-normal">(optional)</span>
+                  </label>
+                  <input type="text" value={subTrade} onChange={(e) => setSubTrade(e.target.value)} placeholder="Framing, Electrical…" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Phone <span className="text-gray-400 font-normal">(optional)</span>
+                  </label>
+                  <input type="tel" value={subPhone} onChange={(e) => setSubPhone(e.target.value)} placeholder="360-555-0100" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                </div>
+                <div className="sm:col-span-3">
+                  <button type="submit" disabled={creatingSub} className="bg-orange-500 text-white py-2 px-6 rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50">
+                    {creatingSub ? "Adding..." : "Add Subcontractor"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Admin Settings ─── */}
+        {isAdmin && (
+          <div className="mb-8">
+            <SectionHeader>Admin Settings</SectionHeader>
+            <div className="bg-white rounded-xl shadow-sm p-6">
+              <h3 className="font-medium text-gray-900 mb-1">Phase Categories</h3>
+              <p className="text-sm text-gray-600 mb-4">Manage custom phase categories. Predefined categories are always available.</p>
+
+              {categoryError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{categoryError}</div>
+              )}
+
+              <div className="mb-6">
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">Predefined</h4>
+                <div className="flex flex-wrap gap-2">
+                  {PREDEFINED_CATEGORIES.map((cat) => (
+                    <span key={cat} className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
+                      {cat}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {customCategories.length > 0 && (
+                <div className="mb-6">
+                  <h4 className="text-sm font-semibold text-gray-700 mb-2">Custom</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {customCategories.map((cat) => (
+                      <div key={cat} className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2">
+                        {cat}
+                        <button
+                          onClick={() => removeCategory(cat)}
+                          className="ml-1 text-indigo-600 hover:text-indigo-800 font-bold text-xs"
+                          title="Delete category"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <h4 className="text-sm font-semibold text-gray-700 mb-2">Add Custom Category</h4>
+                <form onSubmit={addCategory} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newCategory}
+                    onChange={(e) => setNewCategory(e.target.value)}
+                    placeholder="e.g., Landscaping, Concrete..."
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={addingCategory || !newCategory.trim()}
+                    className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {addingCategory ? "Adding..." : "Add"}
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
         )}
       </div>
+
+      {/* ─── Change Password Modal ─── */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+            <h3 className="font-semibold text-gray-900 mb-4">Change Password</h3>
+            {passwordSuccess ? (
+              <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">Password changed successfully!</div>
+            ) : (
+              <form onSubmit={changePassword} className="flex flex-col gap-4">
+                {passwordError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{passwordError}</div>
+                )}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Current Password</label>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    required
+                    autoFocus
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={newPasswordModal}
+                    onChange={(e) => setNewPasswordModal(e.target.value)}
+                    required
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    value={confirmPasswordModal}
+                    onChange={(e) => setConfirmPasswordModal(e.target.value)}
+                    required
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordModal(false)}
+                    className="flex-1 border border-gray-300 text-gray-700 py-2 px-4 rounded-lg text-sm font-medium hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingPassword}
+                    className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {savingPassword ? "Saving…" : "Change Password"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
