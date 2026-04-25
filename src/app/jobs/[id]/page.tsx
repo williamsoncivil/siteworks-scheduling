@@ -201,6 +201,7 @@ interface Message {
   createdAt: string;
   author: { id: string; name: string; role: string };
   phase: { id: string; name: string } | null;
+  mentions: { user: { id: string; name: string } }[];
 }
 
 interface Document {
@@ -396,6 +397,9 @@ export default function JobDetailPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [msgContent, setMsgContent] = useState("");
   const [msgPhaseFilter, setMsgPhaseFilter] = useState("");
+  const [msgMentionQuery, setMsgMentionQuery] = useState<string | null>(null);
+  const [msgMentionStart, setMsgMentionStart] = useState(0);
+  const msgInputRef = useRef<HTMLInputElement>(null);
 
   // Files
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -1053,6 +1057,57 @@ export default function JobDetailPage() {
     } finally {
       setSavingAssign(false);
     }
+  };
+
+  const handleMsgContentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setMsgContent(val);
+    const cursor = e.target.selectionStart ?? val.length;
+    const before = val.slice(0, cursor);
+    const atIdx = before.lastIndexOf("@");
+    if (atIdx >= 0) {
+      const after = before.slice(atIdx + 1);
+      if (!after.includes(" ") || after.split(" ").length <= 2) {
+        setMsgMentionQuery(after.toLowerCase());
+        setMsgMentionStart(atIdx);
+        return;
+      }
+    }
+    setMsgMentionQuery(null);
+  };
+
+  const msgFilteredUsers = msgMentionQuery !== null
+    ? users.filter((u) => u.name.toLowerCase().startsWith(msgMentionQuery) && msgMentionQuery.length > 0)
+    : [];
+
+  const insertMsgMention = (user: User) => {
+    const before = msgContent.slice(0, msgMentionStart);
+    const after = msgContent.slice(msgMentionStart + 1 + (msgMentionQuery?.length ?? 0));
+    setMsgContent(`${before}@${user.name}${after} `);
+    setMsgMentionQuery(null);
+    setTimeout(() => msgInputRef.current?.focus(), 0);
+  };
+
+  const renderMsgContent = (text: string, mentions: { user: { id: string; name: string } }[]) => {
+    if (mentions.length === 0) return <span>{text}</span>;
+    const parts: React.ReactNode[] = [];
+    let remaining = text;
+    let key = 0;
+    for (const { user } of mentions) {
+      const tag = `@${user.name}`;
+      const idx = remaining.indexOf(tag);
+      if (idx >= 0) {
+        if (idx > 0) parts.push(<span key={key++}>{remaining.slice(0, idx)}</span>);
+        parts.push(
+          <span key={key++} className="bg-blue-100 text-blue-700 font-semibold rounded px-1">
+            {tag}
+          </span>
+        );
+        remaining = remaining.slice(idx + tag.length);
+      }
+    }
+    if (remaining) parts.push(<span key={key++}>{remaining}</span>);
+    return <>{parts}</>;
   };
 
   const sendMessage = async (e: React.FormEvent) => {
@@ -2220,7 +2275,7 @@ export default function JobDetailPage() {
                             ? "bg-blue-600 text-white rounded-tr-sm"
                             : "bg-gray-100 text-gray-900 rounded-tl-sm"
                         }`}>
-                          {msg.content}
+                          {renderMsgContent(msg.content, msg.mentions ?? [])}
                         </div>
                         <p className="text-xs text-gray-400 mt-1">
                           {msg.author.name}
@@ -2234,13 +2289,33 @@ export default function JobDetailPage() {
               )}
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm p-4">
+            <div className="bg-white rounded-xl shadow-sm p-4 relative">
+              {/* @mention autocomplete dropdown */}
+              {msgFilteredUsers.length > 0 && (
+                <div className="absolute bottom-full mb-1 left-4 bg-white border border-gray-200 rounded-xl shadow-lg overflow-hidden z-20 w-56">
+                  <p className="text-xs text-gray-400 px-3 py-2 border-b border-gray-100">Mention someone</p>
+                  {msgFilteredUsers.map((u) => (
+                    <button key={u.id} type="button" onMouseDown={(e) => { e.preventDefault(); insertMsgMention(u); }}
+                      className="w-full text-left px-3 py-2 text-sm text-gray-800 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center shrink-0">
+                        {u.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                      </span>
+                      {u.name}
+                    </button>
+                  ))}
+                </div>
+              )}
               <form onSubmit={sendMessage} className="flex gap-3">
                 <input
+                  ref={msgInputRef}
                   type="text"
                   value={msgContent}
-                  onChange={(e) => setMsgContent(e.target.value)}
-                  placeholder="Type a message..."
+                  onChange={handleMsgContentChange}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setMsgMentionQuery(null);
+                    if (e.key === "Enter" && !e.shiftKey && msgFilteredUsers.length === 0) { sendMessage(e as unknown as React.FormEvent); }
+                  }}
+                  placeholder="Type a message… use @Name to notify someone"
                   className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
                 <button type="submit" className="bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-blue-700">
