@@ -292,6 +292,7 @@ export default function JobDetailPage() {
   const [newPhasePredecessorId, setNewPhasePredecessorId] = useState("");
   const [newPhaseCategory, setNewPhaseCategory] = useState("");
   const [viewPhaseBy, setViewPhaseBy] = useState<"category" | "date">("category");
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [selectedPhaseIds, setSelectedPhaseIds] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
   const [applyingBulk, setApplyingBulk] = useState(false);
@@ -515,6 +516,27 @@ export default function JobDetailPage() {
     fetchUsers();
     fetchSchedule();
   }, [fetchJob, fetchUsers, fetchSchedule]);
+
+  // Load collapsed category state from localStorage on mount
+  useEffect(() => {
+    const key = `jobPhasesCategoryState_${jobId}`;
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored) as string[];
+        setCollapsedCategories(new Set(parsed));
+      } catch {
+        // ignore corrupt data — default to all expanded
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId]);
+
+  // Save collapsed category state to localStorage whenever it changes
+  useEffect(() => {
+    const key = `jobPhasesCategoryState_${jobId}`;
+    localStorage.setItem(key, JSON.stringify(Array.from(collapsedCategories)));
+  }, [collapsedCategories, jobId]);
 
   useEffect(() => {
     if (activeTab === "schedule") fetchSchedule();
@@ -1587,8 +1609,23 @@ export default function JobDetailPage() {
                 <div className="space-y-3">
                   {(viewPhaseBy === "category" ? sortPhasesByCategory(phases) : [{category: null, phases: sortPhasesByDate(phases)}]).map((group: any) => (
                     <div key={group.category || "date-view"}>
-                      {group.category && <h3 className="text-sm font-semibold text-gray-700 mb-2 px-2 py-1 bg-gray-50 rounded-lg">{group.category}</h3>}
-                      <div className="space-y-3">
+                      {group.category && (
+                        <button
+                          onClick={() => {
+                            const next = new Set(collapsedCategories);
+                            next.has(group.category) ? next.delete(group.category) : next.add(group.category);
+                            setCollapsedCategories(next);
+                          }}
+                          className="w-full flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2 px-2 py-1 bg-gray-50 hover:bg-gray-100 rounded-lg text-left"
+                        >
+                          <span>{collapsedCategories.has(group.category) ? "▶" : "▼"}</span>
+                          <span>{group.category}</span>
+                          {collapsedCategories.has(group.category) && (
+                            <span className="ml-auto text-xs font-normal text-gray-400">({group.phases.length} phase{group.phases.length !== 1 ? "s" : ""})</span>
+                          )}
+                        </button>
+                      )}
+                      {!collapsedCategories.has(group.category) && <div className="space-y-3">
                         {group.phases.map((phase: any, idx: number) => {
                     const deps = phaseDeps[phase.id] ?? { predecessorDeps: [], successorDeps: [] };
                     const hasDeps = deps.predecessorDeps.length > 0 || deps.successorDeps.length > 0;
@@ -2016,7 +2053,7 @@ export default function JobDetailPage() {
                     </div>
                     );
                   })}
-                      </div>
+                      </div>}
                     </div>
                   ))}
                 </div>
