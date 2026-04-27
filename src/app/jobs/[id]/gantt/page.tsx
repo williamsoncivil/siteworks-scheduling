@@ -268,60 +268,72 @@ export default function JobGanttPage() {
     setSavingDrag(false);
   }, [ganttCascadeModal, commitDragDates]);
 
-  // Global mouse handlers for drag
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      const ds = dragStateRef.current;
-      if (!ds) return;
+  // Pointer-capture drag handlers (attached directly to bar elements)
+  const handleBarPointerDown = useCallback((e: React.PointerEvent, phase: Phase) => {
+    if (!phase.startDate || !phase.endDate) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // Capture all future pointer events on this element — works even when mouse leaves
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 
-      const deltaX = e.clientX - ds.startClientX;
-      if (Math.abs(deltaX) >= DRAG_THRESHOLD) {
-        ds.didDrag = true;
-      }
-      if (!ds.didDrag) return;
-
-      const deltaDays = Math.round(deltaX / dayWidthRef.current);
-      const rawNewStart = addDays(ds.originalStart, deltaDays);
-      const newStart = snapToWeekdayLocal(rawNewStart);
-      const newEnd = endFromBizDays(newStart, ds.bizDayDuration);
-
-      const preview = { phaseId: ds.phaseId, newStart, newEnd, deltaDays };
-      dragPreviewRef.current = preview;
-      setDragPreview(preview);
+    const originalStart = parseISO(phase.startDate);
+    const originalEnd = parseISO(phase.endDate);
+    dragStateRef.current = {
+      phaseId: phase.id,
+      startClientX: e.clientX,
+      originalStart,
+      originalEnd,
+      bizDayDuration: durationBizDays(originalStart, originalEnd),
+      didDrag: false,
     };
+    setDraggingPhaseId(phase.id);
+    setPopover(null);
+  }, []);
 
-    const onMouseUp = (e: MouseEvent) => {
-      const ds = dragStateRef.current;
-      if (!ds) return;
+  const handleBarPointerMove = useCallback((e: React.PointerEvent) => {
+    const ds = dragStateRef.current;
+    if (!ds) return;
+    e.preventDefault();
 
-      dragStateRef.current = null;
-      setDraggingPhaseId(null);
+    const deltaX = e.clientX - ds.startClientX;
+    if (Math.abs(deltaX) >= DRAG_THRESHOLD) {
+      ds.didDrag = true;
+    }
+    if (!ds.didDrag) return;
 
-      if (!ds.didDrag) {
-        setDragPreview(null);
-        dragPreviewRef.current = null;
-        return;
-      }
+    const deltaDays = Math.round(deltaX / dayWidthRef.current);
+    const rawNewStart = addDays(ds.originalStart, deltaDays);
+    const newStart = snapToWeekdayLocal(rawNewStart);
+    const newEnd = endFromBizDays(newStart, ds.bizDayDuration);
 
-      wasRealDragRef.current = true;
+    const preview = { phaseId: ds.phaseId, newStart, newEnd, deltaDays };
+    dragPreviewRef.current = preview;
+    setDragPreview(preview);
+  }, []);
 
-      const preview = dragPreviewRef.current;
+  const handleBarPointerUp = useCallback((e: React.PointerEvent) => {
+    const ds = dragStateRef.current;
+    if (!ds) return;
+
+    dragStateRef.current = null;
+    setDraggingPhaseId(null);
+
+    if (!ds.didDrag) {
       setDragPreview(null);
       dragPreviewRef.current = null;
+      return;
+    }
 
-      if (!preview) return;
+    wasRealDragRef.current = true;
+    const preview = dragPreviewRef.current;
+    setDragPreview(null);
+    dragPreviewRef.current = null;
 
-      const newStartStr = format(preview.newStart, "yyyy-MM-dd");
-      const newEndStr = format(preview.newEnd, "yyyy-MM-dd");
-      saveDraggedPhase(ds.phaseId, newStartStr, newEndStr);
-    };
+    if (!preview) return;
 
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
+    const newStartStr = format(preview.newStart, "yyyy-MM-dd");
+    const newEndStr = format(preview.newEnd, "yyyy-MM-dd");
+    saveDraggedPhase(ds.phaseId, newStartStr, newEndStr);
   }, [saveDraggedPhase]);
 
   // ─── Sidebar drag ──────────────────────────────────────────────────────────
@@ -427,25 +439,7 @@ export default function JobGanttPage() {
     return lines;
   };
 
-  const handleBarMouseDown = (e: React.MouseEvent, phase: Phase) => {
-    if (!phase.startDate || !phase.endDate) return;
-    e.preventDefault();
-    e.stopPropagation();
 
-    const originalStart = parseISO(phase.startDate);
-    const originalEnd = parseISO(phase.endDate);
-
-    dragStateRef.current = {
-      phaseId: phase.id,
-      startClientX: e.clientX,
-      originalStart,
-      originalEnd,
-      bizDayDuration: durationBizDays(originalStart, originalEnd),
-      didDrag: false,
-    };
-    setDraggingPhaseId(phase.id);
-    setPopover(null);
-  };
 
   const handleBarClick = (e: React.MouseEvent, phase: Phase) => {
     e.stopPropagation();
@@ -751,7 +745,10 @@ export default function JobGanttPage() {
                           role="button"
                           tabIndex={0}
                           onClick={(e) => handleBarClick(e, phase)}
-                          onMouseDown={(e) => handleBarMouseDown(e, phase)}
+                          onPointerDown={(e) => handleBarPointerDown(e, phase)}
+                          onPointerMove={handleBarPointerMove}
+                          onPointerUp={handleBarPointerUp}
+                          onPointerCancel={handleBarPointerUp}
                           className={`absolute rounded-md flex items-center px-2 text-white text-xs font-medium shadow-sm overflow-hidden transition-opacity select-none ${
                             isDraggingThis
                               ? "cursor-grabbing ring-2 ring-amber-400 ring-offset-1 opacity-95"
