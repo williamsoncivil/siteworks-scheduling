@@ -20,6 +20,41 @@ import {
   isSameDay,
 } from "date-fns";
 
+// ─── Business-day helpers (client-side, local time) ──────────────────────────
+
+function isWeekendLocal(d: Date): boolean {
+  const dow = d.getDay();
+  return dow === 0 || dow === 6;
+}
+
+function snapToWeekdayLocal(date: Date): Date {
+  let d = new Date(date);
+  while (isWeekendLocal(d)) d = addDays(d, 1);
+  return d;
+}
+
+function durationBizDays(start: Date, end: Date): number {
+  let d = new Date(start);
+  let count = 0;
+  while (d <= end) {
+    if (!isWeekendLocal(d)) count++;
+    d = addDays(d, 1);
+  }
+  return Math.max(count, 1);
+}
+
+function endFromBizDays(start: Date, bizDays: number): Date {
+  let d = snapToWeekdayLocal(new Date(start));
+  let remaining = bizDays - 1;
+  while (remaining > 0) {
+    d = addDays(d, 1);
+    if (!isWeekendLocal(d)) remaining--;
+  }
+  return d;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 interface Phase {
   id: string;
   name: string;
@@ -38,21 +73,40 @@ interface Job {
   phases: Phase[];
 }
 
+interface GanttCascadeModal {
+  phaseId: string;
+  phaseName: string;
+  newStartDate: string;
+  newEndDate: string;
+  updatedPhases: Array<{ id: string; name: string; startDate: string | null; endDate: string | null }>;
+  conflicts: Array<{ userName: string; date: string; jobName: string; phaseName: string }>;
+}
+
+interface DragState {
+  phaseId: string;
+  startClientX: number;
+  originalStart: Date;
+  originalEnd: Date;
+  bizDayDuration: number;
+  didDrag: boolean;
+}
+
 type ViewMode = "week" | "month" | "wholejob";
 
 const ROW_HEIGHT = 48;
 const BAR_HEIGHT = 28;
 const DEFAULT_SIDEBAR_WIDTH = 200;
 const MIN_SIDEBAR_WIDTH = 120;
+const DRAG_THRESHOLD = 5;
 
 function getPhaseColor(phase: Phase): string {
-  if (!phase.startDate || !phase.endDate) return "#94a3b8"; // slate — no dates
+  if (!phase.startDate || !phase.endDate) return "#94a3b8";
   const now = new Date();
   const start = parseISO(phase.startDate);
   const end = parseISO(phase.endDate);
-  if (end < now) return "#22c55e"; // green — complete
-  if (start <= now && end >= now) return "#3b82f6"; // blue — in progress
-  return "#94a3b8"; // slate — not started
+  if (end < now) return "#22c55e";
+  if (start <= now && end >= now) return "#3b82f6";
+  return "#94a3b8";
 }
 
 function skipWeekendDisplay(d: Date): boolean {
@@ -75,8 +129,40 @@ export default function JobGanttPage() {
     }
     return DEFAULT_SIDEBAR_WIDTH;
   });
+
+  // Drag-to-reschedule state
+  const [draggingPhaseId, setDraggingPhaseId] = useState<string | null>(null);
+  const [dragPreview, setDragPreview] = useState<{
+    phaseId: string;
+    newStart: Date;
+    newEnd: Date;
+    deltaDays: number;
+  } | null>(null);
+  const [ganttCascadeModal, setGanttCascadeModal] = useState<GanttCascadeModal | null>(null);
+  const [ganttToast, setGanttToast] = useState<{
+    count: number;
+    phases: Array<{ name: string; startDate: string | null; endDate: string | null }>;
+  } | null>(null);
+  const [savingDrag, setSavingDrag] = useState(false);
+
+  // Refs for drag handlers (avoid stale closures in global listeners)
+  const dragStateRef = useRef<DragState | null>(null);
+  const dragPreviewRef = useRef<typeof dragPreview>(null);
+  const dayWidthRef = useRef<number>(32);
+  const viewStartRef = useRef<Date>(new Date());
+  const wasRealDragRef = useRef(false);
+
   const timelineRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const fetchJob = useCallback(() => {
+    Promise.all([
+      fetch(`/api/jobs/${jobId}`).then((r) => r.json()),
+      fetch(`/api/jobs/${jobId}/phases`).then((r) => r.json()),
+    ]).then(([jobData, phasesData]) => {
+      setJob({ ...jobData, phases: phasesData });
+    });
+  }, [jobId]);
 
   useEffect(() => {
     Promise.all([
@@ -90,7 +176,6 @@ export default function JobGanttPage() {
 
   const phases = job?.phases || [];
 
-  // Compute view range
   const getViewRange = useCallback((): { viewStart: Date; viewEnd: Date; dayWidth: number } => {
     if (viewMode === "week") {
       const viewStart = startOfWeek(currentDate, { weekStartsOn: 0 });
@@ -102,7 +187,6 @@ export default function JobGanttPage() {
       const viewEnd = endOfMonth(currentDate);
       return { viewStart, viewEnd, dayWidth: 32 };
     }
-    // Whole job
     const datedPhases = phases.filter((p) => p.startDate && p.endDate);
     if (datedPhases.length === 0) {
       const viewStart = startOfMonth(currentDate);
@@ -119,6 +203,128 @@ export default function JobGanttPage() {
     const dayWidth = Math.max(20, Math.floor(availableW / totalDays));
     return { viewStart, viewEnd, dayWidth };
   }, [viewMode, currentDate, phases, sidebarWidth]);
+
+  // ─── Drag handlers ─────────────────────────────────────────────────────────
+
+  const saveDraggedPhase = useCallback(async (phaseId: string, newStartStr: string, newEndStr: string) => {
+    setSavingDrag(true);
+    try {
+      // Preview cascade (old system uses dependsOnId)
+      const previewRes = await fetch(`/api/jobs/${jobId}/phases/${phaseId}/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startDate: newStartStr, endDate: newEndStr, preview: true }),
+      });
+      const previewData = await previewRes.json();
+
+      const phase = job?.phases.find((p) => p.id === phaseId);
+
+      if (previewData.updatedPhases && previewData.updatedPhases.length > 0) {
+        setGanttCascadeModal({
+          phaseId,
+          phaseName: phase?.name ?? "",
+          newStartDate: newStartStr,
+          newEndDate: newEndStr,
+          updatedPhases: previewData.updatedPhases,
+          conflicts: previewData.conflicts ?? [],
+        });
+      } else {
+        // No dependents — commit directly
+        await commitDragDates(phaseId, newStartStr, newEndStr);
+      }
+    } finally {
+      setSavingDrag(false);
+    }
+  }, [jobId, job]);
+
+  const commitDragDates = useCallback(async (phaseId: string, newStartStr: string, newEndStr: string) => {
+    // Old system (dependsOnId cascade)
+    await fetch(`/api/jobs/${jobId}/phases/${phaseId}/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startDate: newStartStr, endDate: newEndStr, preview: false }),
+    });
+    // New system (PhaseDependency cascade)
+    const res = await fetch(`/api/phases/${phaseId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ startDate: newStartStr, endDate: newEndStr }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.cascadedPhases?.length > 0) {
+        setGanttToast({ count: data.cascadedPhases.length, phases: data.cascadedPhases });
+        setTimeout(() => setGanttToast(null), 7000);
+      }
+    }
+    fetchJob();
+  }, [jobId, fetchJob]);
+
+  const confirmGanttCascade = useCallback(async () => {
+    if (!ganttCascadeModal) return;
+    setSavingDrag(true);
+    await commitDragDates(ganttCascadeModal.phaseId, ganttCascadeModal.newStartDate, ganttCascadeModal.newEndDate);
+    setGanttCascadeModal(null);
+    setSavingDrag(false);
+  }, [ganttCascadeModal, commitDragDates]);
+
+  // Global mouse handlers for drag
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      const ds = dragStateRef.current;
+      if (!ds) return;
+
+      const deltaX = e.clientX - ds.startClientX;
+      if (Math.abs(deltaX) >= DRAG_THRESHOLD) {
+        ds.didDrag = true;
+      }
+      if (!ds.didDrag) return;
+
+      const deltaDays = Math.round(deltaX / dayWidthRef.current);
+      const rawNewStart = addDays(ds.originalStart, deltaDays);
+      const newStart = snapToWeekdayLocal(rawNewStart);
+      const newEnd = endFromBizDays(newStart, ds.bizDayDuration);
+
+      const preview = { phaseId: ds.phaseId, newStart, newEnd, deltaDays };
+      dragPreviewRef.current = preview;
+      setDragPreview(preview);
+    };
+
+    const onMouseUp = (e: MouseEvent) => {
+      const ds = dragStateRef.current;
+      if (!ds) return;
+
+      dragStateRef.current = null;
+      setDraggingPhaseId(null);
+
+      if (!ds.didDrag) {
+        setDragPreview(null);
+        dragPreviewRef.current = null;
+        return;
+      }
+
+      wasRealDragRef.current = true;
+
+      const preview = dragPreviewRef.current;
+      setDragPreview(null);
+      dragPreviewRef.current = null;
+
+      if (!preview) return;
+
+      const newStartStr = format(preview.newStart, "yyyy-MM-dd");
+      const newEndStr = format(preview.newEnd, "yyyy-MM-dd");
+      saveDraggedPhase(ds.phaseId, newStartStr, newEndStr);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [saveDraggedPhase]);
+
+  // ─── Sidebar drag ──────────────────────────────────────────────────────────
 
   const startSidebarDrag = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -156,22 +362,27 @@ export default function JobGanttPage() {
     window.addEventListener("touchend", onEnd);
   };
 
+  // ─── View calculations ─────────────────────────────────────────────────────
+
   const { viewStart, viewEnd, dayWidth } = getViewRange();
+  // Keep refs in sync for drag handlers
+  dayWidthRef.current = dayWidth;
+  viewStartRef.current = viewStart;
+
   const totalDays = Math.max(differenceInDays(viewEnd, viewStart) + 1, 1);
   const timelineWidth = totalDays * dayWidth;
-
   const days = eachDayOfInterval({ start: viewStart, end: viewEnd });
 
-  const getBarStyle = (phase: Phase) => {
-    if (!phase.startDate || !phase.endDate) return null;
-    const start = parseISO(phase.startDate);
-    const end = parseISO(phase.endDate);
+  const getBarStyle = (phase: Phase, overrideStart?: Date, overrideEnd?: Date) => {
+    const start = overrideStart ?? (phase.startDate ? parseISO(phase.startDate) : null);
+    const end = overrideEnd ?? (phase.endDate ? parseISO(phase.endDate) : null);
+    if (!start || !end) return null;
     const leftDays = differenceInDays(start, viewStart);
     const widthDays = Math.max(differenceInDays(end, start) + 1, 1);
     return {
       left: leftDays * dayWidth,
       width: widthDays * dayWidth,
-      color: getPhaseColor(phase),
+      color: overrideStart ? "#f59e0b" : getPhaseColor(phase), // amber when dragging preview
     };
   };
 
@@ -185,7 +396,6 @@ export default function JobGanttPage() {
     else if (viewMode === "month") setCurrentDate((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1));
   };
 
-  // Month label grouping for whole job view
   const getMonthLabels = () => {
     const labels: { label: string; left: number }[] = [];
     let lastMonth = -1;
@@ -198,7 +408,6 @@ export default function JobGanttPage() {
     return labels;
   };
 
-  // Dependency arrows data
   const getDependencyLines = () => {
     const lines: { x1: number; y1: number; x2: number; y2: number }[] = [];
     phases.forEach((phase, idx) => {
@@ -209,7 +418,6 @@ export default function JobGanttPage() {
       const childBar = getBarStyle(phase);
       const parentBar = getBarStyle(parent);
       if (!childBar || !parentBar) return;
-
       const x1 = parentBar.left + parentBar.width;
       const y1 = parentIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
       const x2 = childBar.left;
@@ -219,8 +427,31 @@ export default function JobGanttPage() {
     return lines;
   };
 
+  const handleBarMouseDown = (e: React.MouseEvent, phase: Phase) => {
+    if (!phase.startDate || !phase.endDate) return;
+    e.preventDefault();
+
+    const originalStart = parseISO(phase.startDate);
+    const originalEnd = parseISO(phase.endDate);
+
+    dragStateRef.current = {
+      phaseId: phase.id,
+      startClientX: e.clientX,
+      originalStart,
+      originalEnd,
+      bizDayDuration: durationBizDays(originalStart, originalEnd),
+      didDrag: false,
+    };
+    setDraggingPhaseId(phase.id);
+    setPopover(null);
+  };
+
   const handleBarClick = (e: React.MouseEvent, phase: Phase) => {
     e.stopPropagation();
+    if (wasRealDragRef.current) {
+      wasRealDragRef.current = false;
+      return;
+    }
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     setPopover({ phase, x: rect.left, y: rect.bottom + 8 });
   };
@@ -238,7 +469,10 @@ export default function JobGanttPage() {
 
   return (
     <Layout>
-      <div className="p-4 md:p-6 max-w-full">
+      <div
+        className="p-4 md:p-6 max-w-full"
+        style={{ userSelect: draggingPhaseId ? "none" : undefined }}
+      >
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div>
@@ -256,7 +490,6 @@ export default function JobGanttPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* View mode */}
             <div className="flex bg-gray-100 rounded-lg p-1">
               {(["week", "month", "wholejob"] as ViewMode[]).map((mode) => (
                 <button
@@ -271,7 +504,6 @@ export default function JobGanttPage() {
               ))}
             </div>
 
-            {/* Navigation */}
             {viewMode !== "wholejob" && (
               <>
                 <button onClick={prevPeriod} className="p-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-600 text-sm">←</button>
@@ -282,7 +514,6 @@ export default function JobGanttPage() {
           </div>
         </div>
 
-        {/* Period label */}
         {viewMode !== "wholejob" && (
           <p className="text-sm text-gray-500 mb-4">
             {viewMode === "week"
@@ -299,6 +530,15 @@ export default function JobGanttPage() {
           </div>
         )}
 
+        {/* Saving overlay */}
+        {savingDrag && (
+          <div className="fixed inset-0 bg-black/20 z-40 flex items-center justify-center pointer-events-none">
+            <div className="bg-white rounded-xl shadow-lg px-5 py-3 text-sm font-medium text-gray-700">
+              Saving...
+            </div>
+          </div>
+        )}
+
         {/* Gantt chart */}
         <div
           ref={containerRef}
@@ -306,16 +546,11 @@ export default function JobGanttPage() {
           onClick={() => setPopover(null)}
         >
           <div className="flex">
-            {/* Left sidebar - phase names */}
-            <div
-              className="shrink-0 bg-white z-10"
-              style={{ width: sidebarWidth }}
-            >
-              {/* Header spacer */}
+            {/* Sidebar */}
+            <div className="shrink-0 bg-white z-10" style={{ width: sidebarWidth }}>
               <div className="h-10 border-b border-gray-100 flex items-center px-3">
                 <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Phase</span>
               </div>
-              {/* Phase rows */}
               {phases.map((phase) => (
                 <div
                   key={phase.id}
@@ -334,7 +569,7 @@ export default function JobGanttPage() {
               ))}
             </div>
 
-            {/* Drag handle — wide enough for mobile touch */}
+            {/* Sidebar resize handle */}
             <div
               className="w-5 shrink-0 cursor-col-resize z-10 flex items-stretch"
               style={{ touchAction: "none" }}
@@ -347,7 +582,7 @@ export default function JobGanttPage() {
             {/* Timeline */}
             <div className="flex-1 overflow-x-auto min-w-0" style={{ WebkitOverflowScrolling: "touch" }}>
               <div style={{ width: timelineWidth, minWidth: "100%" }}>
-                {/* Month labels for whole job view */}
+                {/* Month labels (wholejob view) */}
                 {viewMode === "wholejob" && (
                   <div className="relative h-5 border-b border-gray-100 bg-gray-50">
                     {getMonthLabels().map((ml, i) => (
@@ -395,10 +630,14 @@ export default function JobGanttPage() {
                 <div
                   ref={timelineRef}
                   className="relative"
-                  style={{ height: totalHeight, width: timelineWidth }}
+                  style={{
+                    height: totalHeight,
+                    width: timelineWidth,
+                    cursor: draggingPhaseId ? "grabbing" : "default",
+                  }}
                 >
                   {/* Weekend columns */}
-                  {days.map((day, i) => (
+                  {days.map((day, i) =>
                     skipWeekendDisplay(day) ? (
                       <div
                         key={i}
@@ -406,7 +645,7 @@ export default function JobGanttPage() {
                         style={{ left: i * dayWidth, width: dayWidth }}
                       />
                     ) : null
-                  ))}
+                  )}
 
                   {/* Today line */}
                   {(() => {
@@ -431,7 +670,7 @@ export default function JobGanttPage() {
                     />
                   ))}
 
-                  {/* Dependency arrows (SVG overlay) */}
+                  {/* Dependency arrows */}
                   {depLines.length > 0 && (
                     <svg
                       className="absolute inset-0 pointer-events-none"
@@ -465,7 +704,13 @@ export default function JobGanttPage() {
 
                   {/* Phase bars */}
                   {phases.map((phase, idx) => {
-                    const bar = getBarStyle(phase);
+                    const isDraggingThis = draggingPhaseId === phase.id;
+                    const preview = isDraggingThis ? dragPreview : null;
+
+                    const bar = preview
+                      ? getBarStyle(phase, preview.newStart, preview.newEnd)
+                      : getBarStyle(phase);
+
                     const rowTop = idx * ROW_HEIGHT + (ROW_HEIGHT - BAR_HEIGHT) / 2;
 
                     if (!bar) {
@@ -481,22 +726,65 @@ export default function JobGanttPage() {
                     }
 
                     return (
-                      <button
-                        key={phase.id}
-                        onClick={(e) => handleBarClick(e, phase)}
-                        className="absolute rounded-md flex items-center px-2 text-white text-xs font-medium shadow-sm hover:opacity-90 transition-opacity cursor-pointer overflow-hidden"
-                        style={{
-                          top: rowTop,
-                          left: bar.left,
-                          width: Math.max(bar.width, 4),
-                          height: BAR_HEIGHT,
-                          backgroundColor: bar.color,
-                        }}
-                      >
-                        {bar.width > 40 && (
-                          <span className="truncate">{phase.name}</span>
+                      <div key={phase.id}>
+                        {/* Ghost bar — shows original position while dragging */}
+                        {isDraggingThis && preview && phase.startDate && phase.endDate && (() => {
+                          const origBar = getBarStyle(phase);
+                          if (!origBar) return null;
+                          return (
+                            <div
+                              className="absolute rounded-md opacity-25 pointer-events-none"
+                              style={{
+                                top: rowTop,
+                                left: origBar.left,
+                                width: Math.max(origBar.width, 4),
+                                height: BAR_HEIGHT,
+                                backgroundColor: origBar.color,
+                              }}
+                            />
+                          );
+                        })()}
+
+                        {/* Actual / preview bar */}
+                        <button
+                          onClick={(e) => handleBarClick(e, phase)}
+                          onMouseDown={(e) => handleBarMouseDown(e, phase)}
+                          className={`absolute rounded-md flex items-center px-2 text-white text-xs font-medium shadow-sm overflow-hidden transition-opacity ${
+                            isDraggingThis
+                              ? "cursor-grabbing ring-2 ring-amber-400 ring-offset-1 opacity-95"
+                              : "hover:opacity-90 cursor-grab"
+                          }`}
+                          style={{
+                            top: rowTop,
+                            left: bar.left,
+                            width: Math.max(bar.width, 4),
+                            height: BAR_HEIGHT,
+                            backgroundColor: bar.color,
+                          }}
+                        >
+                          {bar.width > 40 && (
+                            <span className="truncate">{phase.name}</span>
+                          )}
+                        </button>
+
+                        {/* Drag date tooltip */}
+                        {isDraggingThis && preview && (
+                          <div
+                            className="absolute z-30 bg-gray-900 text-white text-[10px] rounded px-2 py-1 pointer-events-none whitespace-nowrap shadow-lg"
+                            style={{
+                              top: rowTop - 28,
+                              left: Math.max(0, bar.left),
+                            }}
+                          >
+                            {format(preview.newStart, "MMM d")} – {format(preview.newEnd, "MMM d, yyyy")}
+                            {preview.deltaDays !== 0 && (
+                              <span className="ml-1.5 opacity-70">
+                                ({preview.deltaDays > 0 ? "+" : ""}{preview.deltaDays}d)
+                              </span>
+                            )}
+                          </div>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -522,6 +810,11 @@ export default function JobGanttPage() {
               <div className="w-4 h-0.5 bg-indigo-400" style={{ borderBottom: "1.5px dashed #6366f1" }} />
               <span className="text-xs text-gray-500">Dependency</span>
             </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-sm bg-amber-400" />
+              <span className="text-xs text-gray-500">Dragging</span>
+            </div>
+            <span className="text-xs text-gray-400 ml-auto italic">Drag bars to reschedule</span>
           </div>
         </div>
       </div>
@@ -564,6 +857,95 @@ export default function JobGanttPage() {
             className="w-full h-1.5 rounded-full mt-3"
             style={{ backgroundColor: getPhaseColor(popover.phase) }}
           />
+          <Link
+            href={`/jobs/${jobId}`}
+            className="mt-3 block text-center text-xs text-blue-600 hover:underline"
+          >
+            Edit dates →
+          </Link>
+        </div>
+      )}
+
+      {/* Cascade confirmation modal */}
+      {ganttCascadeModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-2">⚠️ Cascade Phase Dates</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Moving <strong>{ganttCascadeModal.phaseName}</strong> will shift{" "}
+              <strong>{ganttCascadeModal.updatedPhases.length}</strong> dependent phase(s).
+            </p>
+
+            <div className="mb-4 space-y-1">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Phases that will shift:</p>
+              {ganttCascadeModal.updatedPhases.map((p) => (
+                <div key={p.id} className="text-sm text-gray-700 bg-blue-50 rounded px-3 py-1.5">
+                  <span className="font-medium">{p.name}</span>
+                  {p.startDate && p.endDate && (
+                    <span className="text-xs text-blue-600 ml-2">
+                      → {format(parseISO(p.startDate.split("T")[0]), "MMM d")} – {format(parseISO(p.endDate.split("T")[0]), "MMM d, yyyy")}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {ganttCascadeModal.conflicts.length > 0 && (
+              <div className="mb-4">
+                <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-1">
+                  ⚠️ Scheduling Conflicts Found:
+                </p>
+                {ganttCascadeModal.conflicts.map((c, i) => (
+                  <div key={i} className="text-sm text-red-700 bg-red-50 rounded px-3 py-1.5 mb-1">
+                    {c.userName} on {c.date} is also booked at {c.jobName} ({c.phaseName})
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setGanttCascadeModal(null); fetchJob(); }}
+                className="flex-1 border border-gray-300 text-gray-700 py-2 px-4 rounded-lg text-sm hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmGanttCascade}
+                disabled={savingDrag}
+                className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {savingDrag ? "Saving..." : "Confirm & Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cascade toast */}
+      {ganttToast && (
+        <div className="fixed bottom-6 right-6 z-50 bg-gray-900 text-white rounded-xl shadow-xl p-4 max-w-xs">
+          <p className="font-semibold text-sm mb-1">
+            {ganttToast.count} phase{ganttToast.count !== 1 ? "s" : ""} automatically rescheduled
+          </p>
+          <div className="space-y-0.5">
+            {ganttToast.phases.map((p, i) => (
+              <p key={i} className="text-xs text-gray-300">
+                {p.name}
+                {p.startDate && (
+                  <span className="text-gray-400 ml-1">
+                    → {format(parseISO(p.startDate.split("T")[0]), "MMM d")}
+                  </span>
+                )}
+              </p>
+            ))}
+          </div>
+          <button
+            onClick={() => setGanttToast(null)}
+            className="mt-2 text-xs text-gray-400 hover:text-white"
+          >
+            Dismiss
+          </button>
         </div>
       )}
     </Layout>
