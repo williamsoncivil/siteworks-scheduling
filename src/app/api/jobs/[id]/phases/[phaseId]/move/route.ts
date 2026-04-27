@@ -121,6 +121,13 @@ export async function POST(
               ...(newDepEnd && { endDate: newDepEnd }),
             },
           });
+          // Sync schedule entries to new phase start date
+          if (newDepStart) {
+            await prisma.scheduleEntry.updateMany({
+              where: { phaseId: depId },
+              data: { date: newDepStart },
+            });
+          }
           updatedPhases.push(saved);
         } else {
           updatedPhases.push({
@@ -139,6 +146,11 @@ export async function POST(
     phase = await prisma.phase.update({
       where: { id: phaseId },
       data: { startDate: newStart, endDate: newEnd },
+    });
+    // Sync schedule entries to new start date
+    await prisma.scheduleEntry.updateMany({
+      where: { phaseId },
+      data: { date: newStart },
     });
   } else {
     phase = { ...existing, startDate: newStart.toISOString(), endDate: newEnd.toISOString() };
