@@ -100,9 +100,9 @@ export async function cascadePhaseUpdate(
 
       switch (dep.type) {
         case "FINISH_TO_START": {
-          // successor starts when predecessor finishes + lag
+          // successor starts the next business day after predecessor finishes, plus any lag
           if (current.newEnd) {
-            let proposed = addDays(current.newEnd, dep.lagDays);
+            let proposed = addDays(current.newEnd, dep.lagDays + 1);
             proposed = snapToWeekdayUTC(proposed);
             newSuccessorStart = proposed;
             if (businessDayDuration !== null) {
