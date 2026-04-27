@@ -78,13 +78,15 @@ export async function GET(req: NextRequest) {
       },
       include: {
         job: { select: { id: true, name: true, color: true } },
-        schedules: { select: { id: true } },
       },
       orderBy: { startDate: "asc" },
     });
 
+    // A phase is "unassigned" for this range if no schedule entries in this range reference it.
+    // Do NOT check schedules.length globally — phases with stale entries (old dates after cascade)
+    // must still appear here, otherwise they become invisible on the schedule page.
     unassignedPhases = phases
-      .filter((p) => p.schedules.length === 0 && !assignedPhaseIds.has(p.id))
+      .filter((p) => !assignedPhaseIds.has(p.id))
       .map((p) => ({
         id: p.id,
         name: p.name,

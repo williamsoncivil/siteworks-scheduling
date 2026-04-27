@@ -929,10 +929,16 @@ export default function JobDetailPage() {
     });
     if (res.ok) {
       const data = await res.json();
+      if (data.cascadeError) {
+        console.error("[commitPhaseDates] cascade error:", data.cascadeError);
+      }
       if (data.cascadedPhases?.length > 0) {
         setCascadeToast({ count: data.cascadedPhases.length, phases: data.cascadedPhases });
         setTimeout(() => setCascadeToast(null), 7000);
       }
+    } else {
+      const errText = await res.text().catch(() => res.statusText);
+      console.error("[commitPhaseDates] PATCH /api/phases failed:", res.status, errText);
     }
   };
 

@@ -63,22 +63,27 @@ export async function PATCH(
     },
   });
 
-  // Sync schedule entries to new phase start date when it changed
+  // Sync schedule entries to new phase start date. Always sync when startDate is explicitly
+  // provided — the old move endpoint may have already updated the phase row, so comparing
+  // against existing.startDate would show no change even when the user did change the date.
   if (startDate !== undefined && newStart) {
-    const startChanged = newStart.getTime() !== (existing.startDate?.getTime() ?? 0);
-    if (startChanged) {
-      await prisma.scheduleEntry.updateMany({
-        where: { phaseId: params.id },
-        data: { date: newStart },
-      });
-    }
+    await prisma.scheduleEntry.updateMany({
+      where: { phaseId: params.id },
+      data: { date: newStart },
+    });
   }
 
   // Run cascade whenever dates are explicitly provided (even if already stored — the old move
   // endpoint may have already saved them, so we can't rely on a diff check here)
   let cascadedPhases: Awaited<ReturnType<typeof cascadePhaseUpdate>> = [];
+  let cascadeError: string | null = null;
   if ((startDate !== undefined || endDate !== undefined) && (newStart || newEnd)) {
-    cascadedPhases = await cascadePhaseUpdate(params.id, newStart, newEnd);
+    try {
+      cascadedPhases = await cascadePhaseUpdate(params.id, newStart, newEnd);
+    } catch (err) {
+      console.error("[cascade] cascadePhaseUpdate failed for phase", params.id, err);
+      cascadeError = err instanceof Error ? err.message : String(err);
+    }
   }
 
   broadcastPhaseUpdated({
@@ -87,5 +92,5 @@ export async function PATCH(
     phase: updatedPhase as unknown as Record<string, unknown>,
   });
 
-  return NextResponse.json({ phase: updatedPhase, cascadedPhases });
+  return NextResponse.json({ phase: updatedPhase, cascadedPhases, ...(cascadeError && { cascadeError }) });
 }
