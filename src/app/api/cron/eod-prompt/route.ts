@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN_SCHEDULING;
 const CRON_SECRET = process.env.CRON_SECRET;
 
 async function sendTelegramMessage(chatId: string, text: string) {
@@ -17,8 +17,9 @@ async function sendTelegramMessage(chatId: string, text: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const secret = req.headers.get("x-cron-secret");
-  if (!CRON_SECRET || secret !== CRON_SECRET) {
+  // Vercel crons send: Authorization: Bearer <CRON_SECRET>
+  const authHeader = req.headers.get("authorization");
+  if (!CRON_SECRET || authHeader !== `Bearer ${CRON_SECRET}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -39,22 +40,27 @@ export async function POST(req: NextRequest) {
   for (const user of users) {
     if (!user.telegramChatId) continue;
 
-    // Fetch active phases for today (phases whose date range covers today)
-    const phases = await prisma.phase.findMany({
+    // Fetch phases assigned to this user that are active today
+    const scheduleEntries = await prisma.scheduleEntry.findMany({
       where: {
-        job: { status: "ACTIVE" },
-        startDate: { lte: todayEnd },
-        endDate: { gte: today },
+        userId: user.id,
+        date: { gte: today, lte: todayEnd },
       },
-      include: { job: { select: { name: true } } },
+      include: {
+        phase: { include: { job: { select: { name: true } } } },
+      },
     });
+    const phases = scheduleEntries
+      .map(e => e.phase)
+      .filter(Boolean)
+      .filter(p => p?.job);
 
     if (phases.length === 0) {
       skipped++;
       continue;
     }
 
-    const phaseList = phases.map(p => `• ${p.job.name} — ${p.name}`).join("\n");
+    const phaseList = phases.map(p => `• ${p!.job.name} — ${p!.name}`).join("\n");
     const message = `Hey ${user.name}! 👷 End of day check-in. Here are your active phases today:\n${phaseList}\n\nReply with any progress updates (e.g. "grading is 50% done" or "drainage phase complete")`;
 
     await sendTelegramMessage(user.telegramChatId, message);
