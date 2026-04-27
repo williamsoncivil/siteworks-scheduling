@@ -430,6 +430,7 @@ export default function JobGanttPage() {
   const handleBarMouseDown = (e: React.MouseEvent, phase: Phase) => {
     if (!phase.startDate || !phase.endDate) return;
     e.preventDefault();
+    e.stopPropagation();
 
     const originalStart = parseISO(phase.startDate);
     const originalEnd = parseISO(phase.endDate);
@@ -746,10 +747,12 @@ export default function JobGanttPage() {
                         })()}
 
                         {/* Actual / preview bar */}
-                        <button
+                        <div
+                          role="button"
+                          tabIndex={0}
                           onClick={(e) => handleBarClick(e, phase)}
                           onMouseDown={(e) => handleBarMouseDown(e, phase)}
-                          className={`absolute rounded-md flex items-center px-2 text-white text-xs font-medium shadow-sm overflow-hidden transition-opacity ${
+                          className={`absolute rounded-md flex items-center px-2 text-white text-xs font-medium shadow-sm overflow-hidden transition-opacity select-none ${
                             isDraggingThis
                               ? "cursor-grabbing ring-2 ring-amber-400 ring-offset-1 opacity-95"
                               : "hover:opacity-90 cursor-grab"
@@ -760,12 +763,14 @@ export default function JobGanttPage() {
                             width: Math.max(bar.width, 4),
                             height: BAR_HEIGHT,
                             backgroundColor: bar.color,
+                            touchAction: "none",
+                            userSelect: "none",
                           }}
                         >
                           {bar.width > 40 && (
-                            <span className="truncate">{phase.name}</span>
+                            <span className="truncate pointer-events-none">{phase.name}</span>
                           )}
-                        </button>
+                        </div>
 
                         {/* Drag date tooltip */}
                         {isDraggingThis && preview && (
