@@ -1264,8 +1264,8 @@ export default function JobDetailPage() {
   };
 
   const uploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
 
     if (!session?.user?.id) {
       alert("Not logged in — please refresh and try again.");
@@ -1274,42 +1274,51 @@ export default function JobDetailPage() {
 
     setUploading(true);
     try {
-      // Phase 1: upload file directly from browser to Vercel Blob
-      const timestamp = Date.now();
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const filename = `uploads/${timestamp}_${safeName}`;
+      const errors: string[] = [];
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            const timestamp = Date.now();
+            const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+            const filename = `uploads/${timestamp}_${safeName}`;
 
-      let blobUrl: string;
-      try {
-        const blob = await upload(filename, file, {
-          access: "public",
-          handleUploadUrl: "/api/upload",
-        });
-        blobUrl = blob.url;
-      } catch (uploadErr) {
-        alert(`Upload to storage failed: ${String(uploadErr)}`);
-        return;
+            let blobUrl: string;
+            try {
+              const blob = await upload(filename, file, {
+                access: "public",
+                handleUploadUrl: "/api/upload",
+              });
+              blobUrl = blob.url;
+            } catch (uploadErr) {
+              errors.push(`${file.name}: Upload to storage failed — ${String(uploadErr)}`);
+              return;
+            }
+
+            const res = await fetch("/api/documents", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: file.name,
+                fileUrl: blobUrl,
+                fileType: file.type || "application/octet-stream",
+                jobId,
+                phaseId: uploadPhaseId || null,
+              }),
+            });
+
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              errors.push(`${file.name}: Uploaded but failed to save record — ${err.error ?? res.statusText}`);
+            }
+          } catch (err) {
+            errors.push(`${file.name}: Unexpected error — ${String(err)}`);
+          }
+        })
+      );
+
+      if (errors.length > 0) {
+        alert(errors.join("\n"));
       }
-
-      // Phase 2: save document record to DB
-      const res = await fetch("/api/documents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: file.name,
-          fileUrl: blobUrl,
-          fileType: file.type || "application/octet-stream",
-          jobId,
-          phaseId: uploadPhaseId || null,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(`File uploaded but failed to save record: ${err.error ?? res.statusText}`);
-      }
-    } catch (err) {
-      alert(`Unexpected error: ${String(err)}`);
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -2410,7 +2419,7 @@ export default function JobDetailPage() {
           <div className="space-y-4">
             {/* Upload */}
             <div className="bg-white rounded-xl shadow-sm p-6">
-              <h3 className="font-semibold text-gray-900 mb-4">Upload File</h3>
+              <h3 className="font-semibold text-gray-900 mb-4">Upload Files</h3>
               <div className="space-y-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">Phase (optional)</label>
@@ -2427,8 +2436,8 @@ export default function JobDetailPage() {
                 </div>
                 <label className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-8 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
                   <span className="text-3xl mb-2">📎</span>
-                  <span className="text-sm text-gray-500">{uploading ? "Uploading..." : "📷 Take Photo or Upload File"}</span>
-                  <span className="text-xs text-gray-400 mt-1">Images auto-categorized as photos</span>
+                  <span className="text-sm text-gray-500">{uploading ? "Uploading..." : "📷 Take Photos or Upload Files"}</span>
+                  <span className="text-xs text-gray-400 mt-1">Select multiple — images auto-categorized as photos</span>
                   <input type="file" className="hidden" accept="image/*,application/pdf,video/*,.heic,.heif" multiple onChange={uploadFile} disabled={uploading} />
                 </label>
               </div>

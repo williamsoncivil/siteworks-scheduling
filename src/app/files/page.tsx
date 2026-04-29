@@ -134,37 +134,47 @@ export default function FilesPage() {
   };
 
   const uploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
     if (!uploadJobId) { alert("Please select a job first."); return; }
     if (!session?.user?.id) { alert("Not logged in — please refresh."); return; }
     setUploading(true);
     try {
-      const timestamp = Date.now();
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const blob = await upload(`uploads/${timestamp}_${safeName}`, file, {
-        access: "public",
-        handleUploadUrl: "/api/upload",
-      });
-      const res = await fetch("/api/documents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: file.name,
-          fileUrl: blob.url,
-          fileType: file.type || "application/octet-stream",
-          jobId: uploadJobId,
-          phaseId: uploadPhaseId || null,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        alert(`Failed to save: ${err.error ?? res.statusText}`);
+      const errors: string[] = [];
+      await Promise.all(
+        files.map(async (file) => {
+          try {
+            const timestamp = Date.now();
+            const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+            const blob = await upload(`uploads/${timestamp}_${safeName}`, file, {
+              access: "public",
+              handleUploadUrl: "/api/upload",
+            });
+            const res = await fetch("/api/documents", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: file.name,
+                fileUrl: blob.url,
+                fileType: file.type || "application/octet-stream",
+                jobId: uploadJobId,
+                phaseId: uploadPhaseId || null,
+              }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              errors.push(`${file.name}: Failed to save — ${err.error ?? res.statusText}`);
+            }
+          } catch (err) {
+            errors.push(`${file.name}: Upload error — ${String(err)}`);
+          }
+        })
+      );
+      if (errors.length > 0) {
+        alert(errors.join("\n"));
       } else {
         refreshDocs();
       }
-    } catch (err) {
-      alert(`Upload error: ${String(err)}`);
     } finally {
       setUploading(false);
       e.target.value = "";
@@ -353,11 +363,12 @@ export default function FilesPage() {
                   ? "bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
                   : "bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed"
               }`}>
-                <span>{uploading ? "Uploading…" : "📎 Choose File"}</span>
+                <span>{uploading ? "Uploading…" : "📎 Choose Files"}</span>
                 <input
                   type="file"
                   className="hidden"
                   accept="image/*,application/pdf,video/*,.heic,.heif"
+                  multiple
                   disabled={!uploadJobId || uploading}
                   onChange={uploadFile}
                 />
