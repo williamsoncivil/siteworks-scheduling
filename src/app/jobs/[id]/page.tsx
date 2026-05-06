@@ -2434,12 +2434,20 @@ export default function JobDetailPage() {
                     ))}
                   </select>
                 </div>
-                <label className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-8 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors">
-                  <span className="text-3xl mb-2">📎</span>
-                  <span className="text-sm text-gray-500">{uploading ? "Uploading..." : "📷 Take Photos or Upload Files"}</span>
-                  <span className="text-xs text-gray-400 mt-1">Select multiple — images auto-categorized as photos</span>
-                  <input type="file" className="hidden" accept="image/*,application/pdf,video/*,.heic,.heif" multiple onChange={uploadFile} disabled={uploading} />
-                </label>
+                <div className="flex gap-3">
+                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-blue-300 rounded-xl p-6 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors flex-1">
+                    <span className="text-3xl mb-2">📷</span>
+                    <span className="text-sm text-gray-500">{uploading ? "Uploading..." : "Photos / Videos"}</span>
+                    <span className="text-xs text-gray-400 mt-1">Select multiple</span>
+                    <input type="file" className="hidden" accept="image/*,video/*" multiple onChange={uploadFile} disabled={uploading} />
+                  </label>
+                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-6 cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition-colors flex-1">
+                    <span className="text-3xl mb-2">📄</span>
+                    <span className="text-sm text-gray-500">{uploading ? "Uploading..." : "Documents"}</span>
+                    <span className="text-xs text-gray-400 mt-1">PDF, Word, Excel</span>
+                    <input type="file" className="hidden" accept="application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple onChange={uploadFile} disabled={uploading} />
+                  </label>
+                </div>
               </div>
             </div>
 

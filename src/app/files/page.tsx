@@ -363,11 +363,26 @@ export default function FilesPage() {
                   ? "bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
                   : "bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed"
               }`}>
-                <span>{uploading ? "Uploading…" : "📎 Choose Files"}</span>
+                <span>{uploading ? "Uploading…" : "📷 Photos / Videos"}</span>
                 <input
                   type="file"
                   className="hidden"
-                  accept="image/*,application/pdf,video/*,.heic,.heif"
+                  accept="image/*,video/*"
+                  multiple
+                  disabled={!uploadJobId || uploading}
+                  onChange={uploadFile}
+                />
+              </label>
+              <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors cursor-pointer ${
+                uploadJobId
+                  ? "bg-gray-50 border-gray-300 text-gray-700 hover:bg-gray-100"
+                  : "bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed"
+              }`}>
+                <span>{uploading ? "Uploading…" : "📄 Documents"}</span>
+                <input
+                  type="file"
+                  className="hidden"
+                  accept="application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
                   multiple
                   disabled={!uploadJobId || uploading}
                   onChange={uploadFile}

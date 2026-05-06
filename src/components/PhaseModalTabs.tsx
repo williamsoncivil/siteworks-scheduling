@@ -48,6 +48,7 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const docRef = useRef<HTMLInputElement>(null);
 
   // Lightbox
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
@@ -179,6 +180,7 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
     }
     setUploading(false);
     if (fileRef.current) fileRef.current.value = "";
+    if (docRef.current) docRef.current.value = "";
   };
 
   const isImage = (type: string) => type.startsWith("image/");
@@ -302,11 +304,18 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
               })}
             </div>
             {/* Upload button always visible at bottom */}
-            <button onClick={() => fileRef.current?.click()} disabled={uploading}
-              className="w-full text-xs border-2 border-dashed border-gray-300 rounded-lg py-2.5 text-gray-500 hover:border-blue-400 hover:text-blue-600 transition-colors disabled:opacity-40 shrink-0">
-              {uploading ? "Uploading…" : "📷 Take Photo or Upload File"}
-            </button>
-            <input ref={fileRef} type="file" accept="image/*,.pdf,video/*" multiple className="hidden" onChange={handleFileChange} />
+            <div className="flex gap-2 shrink-0">
+              <button onClick={() => fileRef.current?.click()} disabled={uploading}
+                className="flex-1 text-xs border-2 border-dashed border-blue-300 rounded-lg py-2.5 text-blue-600 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-40">
+                {uploading ? "Uploading…" : "📷 Photos / Videos"}
+              </button>
+              <button onClick={() => docRef.current?.click()} disabled={uploading}
+                className="flex-1 text-xs border-2 border-dashed border-gray-300 rounded-lg py-2.5 text-gray-500 hover:border-gray-400 hover:bg-gray-50 transition-colors disabled:opacity-40">
+                {uploading ? "Uploading…" : "📄 Documents"}
+              </button>
+            </div>
+            <input ref={fileRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={handleFileChange} />
+            <input ref={docRef} type="file" accept="application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple className="hidden" onChange={handleFileChange} />
 
             {/* Lightbox */}
             {lightboxIndex !== null && images.length > 0 && (
