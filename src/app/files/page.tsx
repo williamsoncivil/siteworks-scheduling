@@ -412,18 +412,13 @@ export default function FilesPage() {
                   </select>
                 </div>
               )}
-              <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors cursor-pointer ${
-                uploadJobId
-                  ? "bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
-                  : "bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed"
-              }`}>
+              <label className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors cursor-pointer bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100">
                 <span>📷 {stagedFiles.length > 0 ? `Add More (${stagedFiles.length} queued)` : "Photos / Videos"}</span>
                 <input
                   type="file"
                   className="hidden"
                   accept="image/*,video/*"
                   multiple
-                  disabled={!uploadJobId || uploading}
                   onChange={stagePhotos}
                 />
               </label>
@@ -444,21 +439,15 @@ export default function FilesPage() {
               </label>
               {stagedFiles.length > 0 && (
                 <div className="w-full mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex flex-wrap gap-2 mb-3">
+                  <p className="text-sm font-medium text-blue-800 mb-2">📋 {stagedFiles.length} photo{stagedFiles.length !== 1 ? "s" : ""} queued:</p>
+                  <ul className="text-xs text-blue-700 mb-3 space-y-1">
                     {stagedFiles.map((file, i) => (
-                      <div key={i} className="relative">
-                        {file.type.startsWith("image/") ? (
-                          <img src={URL.createObjectURL(file)} className="w-16 h-16 object-cover rounded-lg border border-blue-200" alt={file.name} />
-                        ) : (
-                          <div className="w-16 h-16 flex items-center justify-center rounded-lg border border-blue-200 bg-white text-2xl">📹</div>
-                        )}
-                        <button
-                          onClick={() => setStagedFiles(prev => prev.filter((_, j) => j !== i))}
-                          className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center font-bold leading-none"
-                        >×</button>
-                      </div>
+                      <li key={i} className="flex items-center justify-between gap-2">
+                        <span className="truncate">📷 {file.name}</span>
+                        <button onClick={() => setStagedFiles(prev => prev.filter((_, j) => j !== i))} className="text-red-500 font-bold shrink-0">✕</button>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                   <button
                     disabled={!uploadJobId || uploading}
                     onClick={uploadStagedFiles}
@@ -466,6 +455,7 @@ export default function FilesPage() {
                   >
                     {uploading ? "Uploading…" : `Upload ${stagedFiles.length} photo${stagedFiles.length !== 1 ? "s" : ""}`}
                   </button>
+                  {!uploadJobId && <p className="text-xs text-red-500 mt-1 text-center">Select a job above first</p>}
                 </div>
               )}
             </div>
