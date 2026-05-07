@@ -422,6 +422,7 @@ export default function FilesPage() {
                   type="file"
                   className="hidden"
                   accept="image/*,video/*"
+                  multiple
                   disabled={!uploadJobId || uploading}
                   onChange={stagePhotos}
                 />

@@ -2492,7 +2492,7 @@ export default function JobDetailPage() {
                     <span className="text-3xl mb-2">📷</span>
                     <span className="text-sm text-gray-500 text-center">{stagedFiles.length > 0 ? `Add More (${stagedFiles.length} queued)` : "Photos / Videos"}</span>
                     <span className="text-xs text-gray-400 mt-1">Tap to add</span>
-                    <input type="file" className="hidden" accept="image/*,video/*" onChange={stagePhotos} disabled={uploading} />
+                    <input type="file" className="hidden" accept="image/*,video/*" multiple onChange={stagePhotos} disabled={uploading} />
                   </label>
                   <label className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-6 cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition-colors flex-1">
                     <span className="text-3xl mb-2">📄</span>

@@ -369,7 +369,7 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
                 {uploading ? "Uploading…" : "📄 Documents"}
               </button>
             </div>
-            <input ref={fileRef} type="file" accept="image/*,video/*" className="hidden" onChange={stagePhotos} />
+            <input ref={fileRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={stagePhotos} />
             <input ref={docRef} type="file" accept="application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple className="hidden" onChange={handleFileChange} />
             {stagedFiles.length > 0 && (
               <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg">
