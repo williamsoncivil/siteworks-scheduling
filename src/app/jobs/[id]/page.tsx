@@ -449,6 +449,7 @@ export default function JobDetailPage() {
   // Files
   const [documents, setDocuments] = useState<Document[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [uploadPhaseId, setUploadPhaseId] = useState("");
   const [fileFilter, setFileFilter] = useState<"all" | "photos" | "documents">("all");
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["__no_phase__"]));
@@ -1323,6 +1324,58 @@ export default function JobDetailPage() {
       setUploading(false);
       e.target.value = "";
       fetchDocuments();
+    }
+  };
+
+  const stagePhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length > 0) setStagedFiles(prev => [...prev, ...files]);
+    e.target.value = "";
+  };
+
+  const uploadStagedFiles = async () => {
+    if (stagedFiles.length === 0) return;
+    if (!session?.user?.id) { alert("Not logged in — please refresh."); return; }
+    setUploading(true);
+    try {
+      const errors: string[] = [];
+      await Promise.all(
+        stagedFiles.map(async (file) => {
+          try {
+            const timestamp = Date.now();
+            const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+            const blob = await upload(`uploads/${timestamp}_${safeName}`, file, {
+              access: "public",
+              handleUploadUrl: "/api/upload",
+            });
+            const res = await fetch("/api/documents", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: file.name,
+                fileUrl: blob.url,
+                fileType: file.type || "application/octet-stream",
+                jobId,
+                phaseId: uploadPhaseId || null,
+              }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              errors.push(`${file.name}: Failed — ${err.error ?? res.statusText}`);
+            }
+          } catch (err) {
+            errors.push(`${file.name}: Upload error — ${String(err)}`);
+          }
+        })
+      );
+      if (errors.length > 0) {
+        alert(errors.join("\n"));
+      } else {
+        setStagedFiles([]);
+        fetchDocuments();
+      }
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -2437,9 +2490,9 @@ export default function JobDetailPage() {
                 <div className="flex gap-3">
                   <label className="flex flex-col items-center justify-center border-2 border-dashed border-blue-300 rounded-xl p-6 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-colors flex-1">
                     <span className="text-3xl mb-2">📷</span>
-                    <span className="text-sm text-gray-500">{uploading ? "Uploading..." : "Photos / Videos"}</span>
-                    <span className="text-xs text-gray-400 mt-1">Select multiple</span>
-                    <input type="file" className="hidden" accept="image/*,video/*" multiple onChange={uploadFile} disabled={uploading} />
+                    <span className="text-sm text-gray-500 text-center">{stagedFiles.length > 0 ? `Add More (${stagedFiles.length} queued)` : "Photos / Videos"}</span>
+                    <span className="text-xs text-gray-400 mt-1">Tap to add</span>
+                    <input type="file" className="hidden" accept="image/*,video/*" onChange={stagePhotos} disabled={uploading} />
                   </label>
                   <label className="flex flex-col items-center justify-center border-2 border-dashed border-gray-300 rounded-xl p-6 cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition-colors flex-1">
                     <span className="text-3xl mb-2">📄</span>
@@ -2448,6 +2501,32 @@ export default function JobDetailPage() {
                     <input type="file" className="hidden" accept="application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple onChange={uploadFile} disabled={uploading} />
                   </label>
                 </div>
+                {stagedFiles.length > 0 && (
+                  <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-xl">
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {stagedFiles.map((file, i) => (
+                        <div key={i} className="relative">
+                          {file.type.startsWith("image/") ? (
+                            <img src={URL.createObjectURL(file)} className="w-16 h-16 object-cover rounded-lg border border-blue-200" alt={file.name} />
+                          ) : (
+                            <div className="w-16 h-16 flex items-center justify-center rounded-lg border border-blue-200 bg-white text-2xl">📹</div>
+                          )}
+                          <button
+                            onClick={() => setStagedFiles(prev => prev.filter((_, j) => j !== i))}
+                            className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center font-bold"
+                          >×</button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      disabled={uploading}
+                      onClick={uploadStagedFiles}
+                      className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                    >
+                      {uploading ? "Uploading…" : `Upload ${stagedFiles.length} photo${stagedFiles.length !== 1 ? "s" : ""}`}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 

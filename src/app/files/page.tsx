@@ -57,6 +57,7 @@ export default function FilesPage() {
   const [uploadPhases, setUploadPhases] = useState<Phase[]>([]);
   const [uploading, setUploading] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
 
   useEffect(() => {
     fetch("/api/jobs")
@@ -178,6 +179,59 @@ export default function FilesPage() {
     } finally {
       setUploading(false);
       e.target.value = "";
+    }
+  };
+
+  const stagePhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length > 0) setStagedFiles(prev => [...prev, ...files]);
+    e.target.value = "";
+  };
+
+  const uploadStagedFiles = async () => {
+    if (stagedFiles.length === 0) return;
+    if (!uploadJobId) { alert("Please select a job first."); return; }
+    if (!session?.user?.id) { alert("Not logged in — please refresh."); return; }
+    setUploading(true);
+    try {
+      const errors: string[] = [];
+      await Promise.all(
+        stagedFiles.map(async (file) => {
+          try {
+            const timestamp = Date.now();
+            const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+            const blob = await upload(`uploads/${timestamp}_${safeName}`, file, {
+              access: "public",
+              handleUploadUrl: "/api/upload",
+            });
+            const res = await fetch("/api/documents", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: file.name,
+                fileUrl: blob.url,
+                fileType: file.type || "application/octet-stream",
+                jobId: uploadJobId,
+                phaseId: uploadPhaseId || null,
+              }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              errors.push(`${file.name}: Failed to save — ${err.error ?? res.statusText}`);
+            }
+          } catch (err) {
+            errors.push(`${file.name}: Upload error — ${String(err)}`);
+          }
+        })
+      );
+      if (errors.length > 0) {
+        alert(errors.join("\n"));
+      } else {
+        setStagedFiles([]);
+        refreshDocs();
+      }
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -363,14 +417,13 @@ export default function FilesPage() {
                   ? "bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
                   : "bg-gray-50 border-gray-200 text-gray-400 cursor-not-allowed"
               }`}>
-                <span>{uploading ? "Uploading…" : "📷 Photos / Videos"}</span>
+                <span>📷 {stagedFiles.length > 0 ? `Add More (${stagedFiles.length} queued)` : "Photos / Videos"}</span>
                 <input
                   type="file"
                   className="hidden"
                   accept="image/*,video/*"
-                  multiple
                   disabled={!uploadJobId || uploading}
-                  onChange={uploadFile}
+                  onChange={stagePhotos}
                 />
               </label>
               <label className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors cursor-pointer ${
@@ -388,6 +441,32 @@ export default function FilesPage() {
                   onChange={uploadFile}
                 />
               </label>
+              {stagedFiles.length > 0 && (
+                <div className="w-full mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex flex-wrap gap-2 mb-3">
+                    {stagedFiles.map((file, i) => (
+                      <div key={i} className="relative">
+                        {file.type.startsWith("image/") ? (
+                          <img src={URL.createObjectURL(file)} className="w-16 h-16 object-cover rounded-lg border border-blue-200" alt={file.name} />
+                        ) : (
+                          <div className="w-16 h-16 flex items-center justify-center rounded-lg border border-blue-200 bg-white text-2xl">📹</div>
+                        )}
+                        <button
+                          onClick={() => setStagedFiles(prev => prev.filter((_, j) => j !== i))}
+                          className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-xs flex items-center justify-center font-bold leading-none"
+                        >×</button>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    disabled={!uploadJobId || uploading}
+                    onClick={uploadStagedFiles}
+                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {uploading ? "Uploading…" : `Upload ${stagedFiles.length} photo${stagedFiles.length !== 1 ? "s" : ""}`}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}

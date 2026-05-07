@@ -47,6 +47,7 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
   // Files
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const docRef = useRef<HTMLInputElement>(null);
 
@@ -183,6 +184,60 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
     if (docRef.current) docRef.current.value = "";
   };
 
+  const stagePhotos = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length > 0) setStagedFiles(prev => [...prev, ...files]);
+    e.target.value = "";
+  };
+
+  const uploadStagedFiles = async () => {
+    if (stagedFiles.length === 0) return;
+    setUploading(true);
+    try {
+      const errors: string[] = [];
+      await Promise.all(
+        stagedFiles.map(async (file) => {
+          try {
+            const timestamp = Date.now() + Math.random();
+            const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+            const blob = await upload(`uploads/${timestamp}_${safeName}`, file, {
+              access: "public",
+              handleUploadUrl: "/api/upload",
+            });
+            const res = await fetch("/api/documents", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: file.name,
+                fileUrl: blob.url,
+                fileType: file.type || "application/octet-stream",
+                fileSize: file.size,
+                jobId,
+                phaseId,
+              }),
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              errors.push(`${file.name}: ${err.error ?? res.statusText}`);
+            }
+          } catch (err) {
+            errors.push(`${file.name}: ${String(err)}`);
+          }
+        })
+      );
+      if (errors.length > 0) {
+        alert(errors.join("\n"));
+      } else {
+        setStagedFiles([]);
+        setDocs(null);
+        const res = await fetch(`/api/documents?jobId=${jobId}&phaseId=${phaseId}`);
+        if (res.ok) { const data = await res.json(); setDocs(Array.isArray(data) ? data : (data.documents ?? [])); }
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const isImage = (type: string) => type.startsWith("image/");
 
   const formatDate = (d: string) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -307,15 +362,41 @@ export function PhaseModalTabs({ phaseId, jobId }: PhaseModalTabsProps) {
             <div className="flex gap-2 shrink-0">
               <button onClick={() => fileRef.current?.click()} disabled={uploading}
                 className="flex-1 text-xs border-2 border-dashed border-blue-300 rounded-lg py-2.5 text-blue-600 hover:border-blue-400 hover:bg-blue-50 transition-colors disabled:opacity-40">
-                {uploading ? "Uploading…" : "📷 Photos / Videos"}
+                {stagedFiles.length > 0 ? `📷 Add More (${stagedFiles.length})` : "📷 Photos / Videos"}
               </button>
               <button onClick={() => docRef.current?.click()} disabled={uploading}
                 className="flex-1 text-xs border-2 border-dashed border-gray-300 rounded-lg py-2.5 text-gray-500 hover:border-gray-400 hover:bg-gray-50 transition-colors disabled:opacity-40">
                 {uploading ? "Uploading…" : "📄 Documents"}
               </button>
             </div>
-            <input ref={fileRef} type="file" accept="image/*,video/*" multiple className="hidden" onChange={handleFileChange} />
+            <input ref={fileRef} type="file" accept="image/*,video/*" className="hidden" onChange={stagePhotos} />
             <input ref={docRef} type="file" accept="application/pdf,.doc,.docx,.xls,.xlsx,.csv,.txt" multiple className="hidden" onChange={handleFileChange} />
+            {stagedFiles.length > 0 && (
+              <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {stagedFiles.map((file, i) => (
+                    <div key={i} className="relative">
+                      {file.type.startsWith("image/") ? (
+                        <img src={URL.createObjectURL(file)} className="w-14 h-14 object-cover rounded border border-blue-200" alt={file.name} />
+                      ) : (
+                        <div className="w-14 h-14 flex items-center justify-center rounded border border-blue-200 bg-white text-xl">📹</div>
+                      )}
+                      <button
+                        onClick={() => setStagedFiles(prev => prev.filter((_, j) => j !== i))}
+                        className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 text-xs flex items-center justify-center font-bold"
+                      >×</button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  disabled={uploading}
+                  onClick={uploadStagedFiles}
+                  className="w-full py-1.5 bg-blue-600 text-white rounded text-xs font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                >
+                  {uploading ? "Uploading…" : `Upload ${stagedFiles.length} photo${stagedFiles.length !== 1 ? "s" : ""}`}
+                </button>
+              </div>
+            )}
 
             {/* Lightbox */}
             {lightboxIndex !== null && images.length > 0 && (
